@@ -6,9 +6,6 @@ from config.render import BACKGROUND_COLOR, BLOCK_COLOR
 from board import Board
 
 logger = logging.getLogger("game.render")
-# tmp log output
-logger.setLevel(logging.DEBUG)
-logger.addHandler(logging.StreamHandler())
 
 blockRects = []
 
@@ -77,8 +74,13 @@ def main() -> None:
     """控制台入口：建立棋盘、初始化日志并启动游戏窗口。"""
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     logger_ = logging.getLogger("game")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s:%(message)s"
+    )
     logger_.setLevel(logging.DEBUG)
     logger_.addHandler(logging.StreamHandler())
     logger_.addHandler(logging.FileHandler(LOGS_DIR / "game.log", mode="w"))
+    for handler in logger_.handlers:
+        handler.setFormatter(formatter)
 
     start(Board(COL_NUMBER, ROW_NUMBER))
