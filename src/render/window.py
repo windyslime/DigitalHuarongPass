@@ -48,20 +48,6 @@ def start(board: Board):
         )
         start_x = (screen.get_width() - (block_size * (COL_NUMBER))) // 2
         start_y = (screen.get_height() - (block_size * (ROW_NUMBER))) // 2
-        for row in range(ROW_NUMBER + 1):
-            pygame.draw.line(
-                screen,
-                BLOCK_COLOR,
-                (start_x, start_y + row * block_size),
-                (start_x + block_size * COL_NUMBER, start_y + row * block_size),
-            )
-        for col in range(COL_NUMBER + 1):
-            pygame.draw.line(
-                screen,
-                BLOCK_COLOR,
-                (start_x + col * block_size, start_y),
-                (start_x + col * block_size, start_y + block_size * ROW_NUMBER),
-            )
         blockRects.clear()
         for row in range(ROW_NUMBER):
             tmp = []
@@ -77,6 +63,7 @@ def start(board: Board):
                 font = pygame.font.Font(None, int(block_size * 0.5))
                 text_surface = font.render(text, True, BLOCK_COLOR)
                 text_rect = text_surface.get_rect(center=rect.center)
+                pygame.draw.rect(screen, BLOCK_COLOR, rect, 2)  # Draw the block border
                 screen.blit(text_surface, text_rect)
 
             blockRects.append(tmp)

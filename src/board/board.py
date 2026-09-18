@@ -1,5 +1,6 @@
 import random
 import logging
+import pygame
 
 logger = logging.getLogger("game.board")
 
@@ -25,6 +26,26 @@ class Board:
         self.board = generate_board(col, row)
         logger.debug(f"Initialized board: {self.board}")
         logger.info(f"Board created with dimensions {col}x{row}")
+
+    def dealWithSwap(self, pos: pygame.Vector2) -> pygame.Vector2 | None:
+        """处理两个位置的交换。
+        自动寻找挨着他的空白格，并完成与空白格的交换此时输出空白格的坐标(用于制作动画),若点击的为空白格或点击格周围没有空白格，则输出false
+
+        Args:
+            pos (pygame.Vector2): 位置的坐标。
+
+        Returns:
+            pygame.Vector2 | None: 如果交换成功，返回空白格的位置；否则返回 None。
+        """
+        pass  # wu写
+
+    def checkWin(self) -> bool:
+        """检查当前棋盘是否处于胜利状态。
+
+        Returns:
+            bool: 如果棋盘处于胜利状态，返回 True；否则返回 False。
+        """
+        pass  # wu写
 
 
 def generate_board(col: int, row: int) -> list[list[int]]:
