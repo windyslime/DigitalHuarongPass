@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+# uv.lock
+
+# Reports & Coverage
+reports/
+.coverage
+.coverage.*
+htmlcov/
+
+# tmp
+tmp_*
+*_tmp.*
+
+
+
+# logs
+*.log
+log/
+logs/
+
+# game records
+records/
+
+# Dashboard (Vue)
+dashboard/node_modules/
+src/game_chat_room/server/static/
