@@ -93,7 +93,3 @@ def main() -> None:
     logger_.addHandler(logging.FileHandler(LOGS_DIR / "game.log", mode="w"))
 
     start(Board(COL_NUMBER, ROW_NUMBER))
-
-
-if __name__ == "__main__":
-    main()
