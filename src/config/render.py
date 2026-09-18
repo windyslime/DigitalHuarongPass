@@ -1,0 +1,2 @@
+BACKGROUND_COLOR = "#ffffff"
+BLOCK_COLOR = "#000000"
