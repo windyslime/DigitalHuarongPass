@@ -13,7 +13,7 @@ logger.addHandler(logging.StreamHandler())
 blockRects = []
 
 
-def start(board:Board):
+def start(board: Board):
     pygame.init()
     screen: pygame.Surface = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
     pygame.display.set_caption("DigitalHuarongPass")
@@ -30,7 +30,9 @@ def start(board:Board):
                 for i, rects in enumerate(blockRects):
                     for j, rect in enumerate(rects):
                         if rect.collidepoint(mouse_pos):
-                            logger.info(f"Block {i},{j} clicked at position {mouse_pos}")
+                            logger.info(
+                                f"Block {i},{j} clicked at position {mouse_pos}"
+                            )
                             block_num = (i, j)
                             break
                     if block_num != (-1, -1):

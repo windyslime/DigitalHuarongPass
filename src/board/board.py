@@ -1,4 +1,8 @@
 import random
+import logging
+
+logger = logging.getLogger("game.board")
+
 
 class Board:
     """棋盘类，表示数字华容道的棋盘。
@@ -19,6 +23,9 @@ class Board:
         self.col = col
         self.row = row
         self.board = generate_board(col, row)
+        logger.debug(f"Initialized board: {self.board}")
+        logger.info(f"Board created with dimensions {col}x{row}")
+
 
 def generate_board(col: int, row: int) -> list[list[int]]:
     """生成一个保证可解的随机数字华容道棋盘。
@@ -47,7 +54,9 @@ def generate_board(col: int, row: int) -> list[list[int]]:
         solvable = (inversions + blank_row_from_bottom) % 2 == 1
 
     if not solvable:
-        positions = [(r, c) for r in range(row) for c in range(col) if board[r][c] != -1]
+        positions = [
+            (r, c) for r in range(row) for c in range(col) if board[r][c] != -1
+        ]
         (r1, c1), (r2, c2) = random.sample(positions, 2)
         board[r1][c1], board[r2][c2] = board[r2][c2], board[r1][c1]
 
