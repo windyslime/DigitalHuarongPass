@@ -8,6 +8,8 @@ from config.render import (
     BLOCK_HIGHLIGHT_COLOR,
     TEXT_COLOR,
     HIGHLIGHT_TIME,
+    WIN_HIGHLIGHT_COLOR,
+    WIN_HIGHLIGHT_TIME
 )
 from board import Board
 
@@ -149,26 +151,137 @@ def start(board: Board):
     if not win:
         pygame.quit()
         return
-    old_screen = screen.copy()
-    while True:
+    running = True
+    end_tick = pygame.time.get_ticks()
+    while running:
+        tick = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == QUIT:
-                pygame.quit()
-                return
-            elif event.type == KEYDOWN and event.key == K_ESCAPE:
-                pygame.quit()
-                return
-        screen.fill(BACKGROUND_COLOR)
-        screen.blit(old_screen, (0, 0))
-        screen.blit(
-            pygame.font.Font(None, 72).render("You Win!", True, TEXT_COLOR),
-            (screen.get_width() // 2 - 100, screen.get_height() // 2 - 36),
+                running = False
+            elif event.type == MOUSEMOTION:
+                old_block_num = block_num
+                block_num = (-1, -1)
+                mouse_pos = event.pos
+                # logger.debug(f"Mouse moved to position {mouse_pos}")
+                for i, rects in enumerate(blockRects):
+                    for j, rect in enumerate(rects):
+                        # logger.debug(f"Checking block {j},{i} at position {mouse_pos}")
+                        if rect.collidepoint(mouse_pos):
+                            # logger.debug(f"Mouse is over block {j},{i} at position {mouse_pos}")
+                            if old_block_num != (j, i):
+                                logger.info(
+                                    f"Move to block {j},{i} at position {mouse_pos}"
+                                )
+                            block_num = (j, i)
+                            break
+                    if block_num != (-1, -1):
+                        break
+            elif event.type == KEYDOWN:
+                running = False
+
+        highlight_blocks[(block_num[1], block_num[0])] = (
+            tick  # Reset the highlight animation for this block
         )
-        screen.blit(
-            pygame.font.Font(None, 36).render("Press ESC to exit.", True, TEXT_COLOR),
-            (screen.get_width() // 2 - 100, screen.get_height() // 2 + 36),
+        screen.fill(BACKGROUND_COLOR)  # Fill the screen with the background color
+        # Draw game elements here
+        block_size = min(
+            (
+                screen.get_width() // (COL_NUMBER + 2),
+                screen.get_height() // (ROW_NUMBER + 2),
+            )
         )
-        pygame.display.flip()
+        start_x = (screen.get_width() - (block_size * (COL_NUMBER))) // 2
+        start_y = (screen.get_height() - (block_size * (ROW_NUMBER))) // 2
+        blockRects.clear()
+        for row in range(ROW_NUMBER):
+            tmp = []
+            for col in range(COL_NUMBER):
+                rect = pygame.Rect(
+                    start_x + col * block_size,
+                    start_y + row * block_size,
+                    block_size,
+                    block_size,
+                )
+                tmp.append(rect)
+                text = str(board.board[row][col]) if board.board[row][col] != -1 else ""
+                font = pygame.font.Font(None, int(block_size * 0.5))
+                text_surface = font.render(text, True, BLOCK_COLOR)
+                text_rect = text_surface.get_rect(center=rect.center)
+                if (
+                    tick - highlight_blocks.get((row, col), -HIGHLIGHT_TIME)
+                    < HIGHLIGHT_TIME
+                ):
+                    old_color = pygame.Color(BLOCK_HIGHLIGHT_COLOR)
+                    new_color = pygame.Color(BACKGROUND_COLOR)
+                    color = pygame.Color(
+                        int(
+                            (new_color.r - old_color.r)
+                            * (tick - highlight_blocks[(row, col)])
+                            / HIGHLIGHT_TIME
+                            + old_color.r
+                        ),
+                        int(
+                            (new_color.g - old_color.g)
+                            * (tick - highlight_blocks[(row, col)])
+                            / HIGHLIGHT_TIME
+                            + old_color.g
+                        ),
+                        int(
+                            (new_color.b - old_color.b)
+                            * (tick - highlight_blocks[(row, col)])
+                            / HIGHLIGHT_TIME
+                            + old_color.b
+                        ),
+                        int(
+                            (new_color.a - old_color.a)
+                            * (tick - highlight_blocks[(row, col)])
+                            / HIGHLIGHT_TIME
+                            + old_color.a
+                        ),
+                    )
+                    pygame.draw.rect(screen, color, rect)
+                if  (col+row)*WIN_HIGHLIGHT_TIME<(tick -end_tick) % (WIN_HIGHLIGHT_TIME*(ROW_NUMBER+COL_NUMBER+1)) < (col+row+1)*WIN_HIGHLIGHT_TIME:
+                    old_color = pygame.Color(BACKGROUND_COLOR)
+                    new_color = pygame.Color(WIN_HIGHLIGHT_COLOR)
+                    percent = 1-(2*(((tick -end_tick) % (WIN_HIGHLIGHT_TIME*(ROW_NUMBER+COL_NUMBER+1)) - (col+row)*WIN_HIGHLIGHT_TIME) / WIN_HIGHLIGHT_TIME)-1)**2
+                    color = pygame.Color(
+                        int(
+                            (new_color.r - old_color.r)
+                            * percent
+                            + old_color.r
+                        ),
+                        int(
+                            (new_color.g - old_color.g)
+                            * percent
+                            + old_color.g
+                        ),
+                        int(
+                            (new_color.b - old_color.b)
+                            * percent
+                            + old_color.b
+                        ),
+                        int(
+                            (new_color.a - old_color.a)
+                            * percent
+                            + old_color.a
+                        ),
+                    )
+                    pygame.draw.rect(screen, color, rect)
+                pygame.draw.rect(screen, BLOCK_COLOR, rect, 2)  # Draw the block border
+                screen.blit(text_surface, text_rect)
+
+            blockRects.append(tmp)
+        
+        font = pygame.font.Font(None, int(block_size * 1.5))
+        text_surface = font.render("You win!", True, TEXT_COLOR)
+        font2 = pygame.font.Font(None, int(block_size * 0.5))
+        text2_surface = font2.render("Press any key to exit.", True, TEXT_COLOR)
+        tex2_rect = text2_surface.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 + block_size))
+        text_rect = text_surface.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 - block_size))
+        screen.blit(text_surface, text_rect)
+        screen.blit(text2_surface, tex2_rect)  
+
+        pygame.display.flip()  # Update the display
     pygame.quit()
 
 
