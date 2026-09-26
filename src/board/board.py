@@ -6,6 +6,9 @@ logger = logging.getLogger("game.board")
 
 
 # deepseek加的这个注释句号有点多啊, 注释是我写的，给你看的
+END = object()
+
+
 class Board:
     """棋盘类，表示数字华容道的棋盘。
 
@@ -70,6 +73,15 @@ class Board:
         logger.debug(f"Checking win condition: current={flat}, expected={expected}")
         return flat == expected
 
+    def get_road(self) -> pygame.Vector2:
+        """获取当前棋盘的解路，返回一个生成器，生成从当前棋盘到胜利状态的每一步移动(-1|0|1, -1|0|1)
+        最后返回END表示结束（wu写）"""
+
+        yield pygame.Vector2(0, 0)
+        yield pygame.Vector2(0, 1)
+        yield pygame.Vector2(1, 1)
+        yield END
+
 
 def generate_board(col: int, row: int) -> list[list[int]]:
     """生成一个保证可解的随机数字华容道棋盘。
@@ -96,7 +108,7 @@ def generate_board(col: int, row: int) -> list[list[int]]:
         solvable = inversions % 2 == 0
     else:
         solvable = (inversions + blank_row_from_bottom) % 2 == 1
-# 不可解情况(这破玩意怎么这么难搞)
+    # 不可解情况(这破玩意怎么这么难搞)
     if not solvable:
         positions = [
             (r, c) for r in range(row) for c in range(col) if board[r][c] != -1
