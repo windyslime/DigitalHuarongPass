@@ -9,7 +9,8 @@ from config.render import (
     TEXT_COLOR,
     HIGHLIGHT_TIME,
     WIN_HIGHLIGHT_COLOR,
-    WIN_HIGHLIGHT_TIME
+    WIN_HIGHLIGHT_TIME,
+    MOVE_TIME,
 )
 from board import Board
 
@@ -17,9 +18,15 @@ logger = logging.getLogger("game.render")
 
 blockRects = []
 highlight_blocks: dict[tuple[int, int], int] = {}  # 记录方格上次需要高亮的时刻。
+move_blocks: tuple[tuple[int, int], tuple[int, int], int] = (
+    (-1, -1),
+    (-1, -1),
+    -MOVE_TIME,
+)  # 记录上一次移动的方块坐标和移动距离。
 
 
 def start(board: Board):
+    global move_blocks, blockRects, highlight_blocks
     pygame.init()
     screen: pygame.Surface = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
     pygame.display.set_caption("DigitalHuarongPass")
@@ -37,11 +44,19 @@ def start(board: Board):
                 # logger.info(f"Mouse button pressed at position {event.pos}")
                 if event.button != 1:
                     continue
+                if tick - move_blocks[2] < MOVE_TIME:
+                    continue
                 if block_num != (-1, -1):
                     logger.info(f"Swapping block {block_num}")
-                    logger.info(
-                        f"Result: {board.dealWithSwap(pygame.Vector2(block_num[0], block_num[1]))}"
-                    )
+                    result = board.dealWithSwap(block_num)
+                    logger.info(f"Result: {result}")
+                    if result is not None:
+                        result = (result[1], result[0])
+                        move_blocks = (
+                            block_num,
+                            result,
+                            tick,
+                        )
                     if board.checkWin():
                         logger.info("You win!")
                         running = False
@@ -76,9 +91,10 @@ def start(board: Board):
                     board.board[ROW_NUMBER - 1][COL_NUMBER - 1] = -1
                     logger.info("Resetting the board to the initial state.")
 
-        highlight_blocks[(block_num[1], block_num[0])] = (
-            tick  # Reset the highlight animation for this block
-        )
+        if tick - move_blocks[2] >= MOVE_TIME:
+            highlight_blocks[(block_num[1], block_num[0])] = (
+                tick  # Reset the highlight animation for this block
+            )
         screen.fill(BACKGROUND_COLOR)  # Fill the screen with the background color
         # Draw game elements here
         block_size = min(
@@ -93,14 +109,50 @@ def start(board: Board):
         for row in range(ROW_NUMBER):
             tmp = []
             for col in range(COL_NUMBER):
+                if (col, row) == move_blocks[1] and tick - move_blocks[2] < MOVE_TIME:
+                    continue
+                offset = (0, 0)
+                text = str(board.board[row][col]) if board.board[row][col] != -1 else ""
+                if (col, row) == move_blocks[0] and tick - move_blocks[2] < MOVE_TIME:
+                    time = (tick - move_blocks[2]) / MOVE_TIME
+                    direction = (
+                        move_blocks[1][0] - move_blocks[0][0],
+                        move_blocks[1][1] - move_blocks[0][1],
+                    )
+                    percent = 1 + (time - 1) ** 3
+                    offset = (
+                        direction[0] * percent * block_size,
+                        direction[1] * percent * block_size,
+                    )
+                    text = (
+                        str(board.board[move_blocks[1][1]][move_blocks[1][0]])
+                        if board.board[move_blocks[1][1]][move_blocks[1][0]] != -1
+                        else ""
+                    )
+                    rect = pygame.Rect(
+                        start_x + col * block_size,
+                        start_y + row * block_size,
+                        block_size,
+                        block_size,
+                    )
+
+                    second = rect.move(
+                        direction[0] * block_size, direction[1] * block_size
+                    )  # move 不修改原 rect，返回副本
+                    rect.union_ip(second)  # union_ip 修改原 rect
+                    pygame.draw.rect(
+                        screen,
+                        BLOCK_COLOR,
+                        rect,
+                        2,
+                    )
                 rect = pygame.Rect(
                     start_x + col * block_size,
                     start_y + row * block_size,
                     block_size,
                     block_size,
-                )
+                ).move(*offset)
                 tmp.append(rect)
-                text = str(board.board[row][col]) if board.board[row][col] != -1 else ""
                 font = pygame.font.Font(None, int(block_size * 0.5))
                 text_surface = font.render(text, True, BLOCK_COLOR)
                 text_rect = text_surface.get_rect(center=rect.center)
@@ -196,14 +248,49 @@ def start(board: Board):
         for row in range(ROW_NUMBER):
             tmp = []
             for col in range(COL_NUMBER):
+                if (col, row) == move_blocks[1] and tick - move_blocks[2] < MOVE_TIME:
+                    continue
+                offset = (0, 0)
+                text = str(board.board[row][col]) if board.board[row][col] != -1 else ""
+                if (col, row) == move_blocks[0] and tick - move_blocks[2] < MOVE_TIME:
+                    time = (tick - move_blocks[2]) / MOVE_TIME
+                    direction = (
+                        move_blocks[1][0] - move_blocks[0][0],
+                        move_blocks[1][1] - move_blocks[0][1],
+                    )
+                    percent = 1 + (time - 1) ** 3
+                    offset = (
+                        direction[0] * percent * block_size,
+                        direction[1] * percent * block_size,
+                    )
+                    text = (
+                        str(board.board[move_blocks[1][1]][move_blocks[1][0]])
+                        if board.board[move_blocks[1][1]][move_blocks[1][0]] != -1
+                        else ""
+                    )
+                    rect = pygame.Rect(
+                        start_x + col * block_size,
+                        start_y + row * block_size,
+                        block_size,
+                        block_size,
+                    )
+                    second = rect.move(
+                        direction[0] * block_size, direction[1] * block_size
+                    )
+                    rect.union_ip(second)
+                    pygame.draw.rect(
+                        screen,
+                        BLOCK_COLOR,
+                        rect,
+                        2,
+                    )
                 rect = pygame.Rect(
                     start_x + col * block_size,
                     start_y + row * block_size,
                     block_size,
                     block_size,
-                )
+                ).move(*offset)
                 tmp.append(rect)
-                text = str(board.board[row][col]) if board.board[row][col] != -1 else ""
                 font = pygame.font.Font(None, int(block_size * 0.5))
                 text_surface = font.render(text, True, BLOCK_COLOR)
                 text_rect = text_surface.get_rect(center=rect.center)
@@ -240,46 +327,57 @@ def start(board: Board):
                         ),
                     )
                     pygame.draw.rect(screen, color, rect)
-                if  (col+row)*WIN_HIGHLIGHT_TIME<(tick -end_tick) % (WIN_HIGHLIGHT_TIME*(ROW_NUMBER+COL_NUMBER+1)) < (col+row+1)*WIN_HIGHLIGHT_TIME:
+                if (
+                    (col + row) * WIN_HIGHLIGHT_TIME
+                    < (tick - end_tick)
+                    % (WIN_HIGHLIGHT_TIME * (ROW_NUMBER + COL_NUMBER + 1))
+                    < (col + row + 1) * WIN_HIGHLIGHT_TIME
+                ):
                     old_color = pygame.Color(BACKGROUND_COLOR)
                     new_color = pygame.Color(WIN_HIGHLIGHT_COLOR)
-                    percent = 1-(2*(((tick -end_tick) % (WIN_HIGHLIGHT_TIME*(ROW_NUMBER+COL_NUMBER+1)) - (col+row)*WIN_HIGHLIGHT_TIME) / WIN_HIGHLIGHT_TIME)-1)**2
+                    percent = (
+                        1
+                        - (
+                            2
+                            * (
+                                (
+                                    (tick - end_tick)
+                                    % (
+                                        WIN_HIGHLIGHT_TIME
+                                        * (ROW_NUMBER + COL_NUMBER + 1)
+                                    )
+                                    - (col + row) * WIN_HIGHLIGHT_TIME
+                                )
+                                / WIN_HIGHLIGHT_TIME
+                            )
+                            - 1
+                        )
+                        ** 2
+                    )
                     color = pygame.Color(
-                        int(
-                            (new_color.r - old_color.r)
-                            * percent
-                            + old_color.r
-                        ),
-                        int(
-                            (new_color.g - old_color.g)
-                            * percent
-                            + old_color.g
-                        ),
-                        int(
-                            (new_color.b - old_color.b)
-                            * percent
-                            + old_color.b
-                        ),
-                        int(
-                            (new_color.a - old_color.a)
-                            * percent
-                            + old_color.a
-                        ),
+                        int((new_color.r - old_color.r) * percent + old_color.r),
+                        int((new_color.g - old_color.g) * percent + old_color.g),
+                        int((new_color.b - old_color.b) * percent + old_color.b),
+                        int((new_color.a - old_color.a) * percent + old_color.a),
                     )
                     pygame.draw.rect(screen, color, rect)
                 pygame.draw.rect(screen, BLOCK_COLOR, rect, 2)  # Draw the block border
                 screen.blit(text_surface, text_rect)
 
             blockRects.append(tmp)
-        
+
         font = pygame.font.Font(None, int(block_size * 1.5))
         text_surface = font.render("You win!", True, TEXT_COLOR)
         font2 = pygame.font.Font(None, int(block_size * 0.5))
         text2_surface = font2.render("Press any key to exit.", True, TEXT_COLOR)
-        tex2_rect = text2_surface.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 + block_size))
-        text_rect = text_surface.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 - block_size))
+        tex2_rect = text2_surface.get_rect(
+            center=(screen.get_width() // 2, screen.get_height() // 2 + block_size)
+        )
+        text_rect = text_surface.get_rect(
+            center=(screen.get_width() // 2, screen.get_height() // 2 - block_size)
+        )
         screen.blit(text_surface, text_rect)
-        screen.blit(text2_surface, tex2_rect)  
+        screen.blit(text2_surface, tex2_rect)
 
         pygame.display.flip()  # Update the display
     pygame.quit()

@@ -1,3 +1,4 @@
+from typing import Generator
 import random
 import logging
 import pygame
@@ -31,7 +32,7 @@ class Board:
         logger.debug(f"Initialized board: {self.board}")
         logger.info(f"Board created with dimensions {col}x{row}")
 
-    def dealWithSwap(self, pos: pygame.Vector2) -> pygame.Vector2 | None:
+    def dealWithSwap(self, pos: tuple[int, int]) -> tuple[int, int] | None:
         """处理两个位置的交换。
         自动寻找挨着他的空白格，并完成与空白格的交换此时输出空白格的坐标(用于制作动画),若点击的为空白格或点击格周围没有空白格，则输出false
 
@@ -41,7 +42,7 @@ class Board:
         Returns:
             pygame.Vector2 | None: 如果交换成功，返回空白格交换后的坐标（x 为行索引，y 为列索引）；否则返回 None。
         """
-        row, col = int(pos.y), int(pos.x)
+        row, col = int(pos[1]), int(pos[0])
         if not (0 <= row < self.row and 0 <= col < self.col):
             return None
         if self.board[row][col] == -1:
@@ -58,7 +59,7 @@ class Board:
                     logger.debug(
                         f"Swapped ({row},{col}) with blank ({blank_row},{blank_col})"
                     )
-                    return pygame.Vector2(blank_row, blank_col)
+                    return blank_row, blank_col
 
         return None
 
@@ -73,7 +74,7 @@ class Board:
         logger.debug(f"Checking win condition: current={flat}, expected={expected}")
         return flat == expected
 
-    def get_road(self) -> pygame.Vector2:
+    def get_road(self) -> Generator[tuple[int, int] | object]:
         """获取当前棋盘的解路，返回一个生成器，生成从当前棋盘到胜利状态的每一步移动(-1|0|1, -1|0|1)
         最后返回END表示结束（wu写）"""
 
