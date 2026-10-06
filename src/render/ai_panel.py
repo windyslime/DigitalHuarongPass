@@ -70,12 +70,17 @@ def draw_ai_panel(
         row_rect = pygame.Rect(x - 6, y - 4, width + 12, 36)
         if selected:
             pygame.draw.rect(screen, (224, 236, 250), row_rect, border_radius=4)
-        color = ACCENT_COLOR if selected else (150, 160, 172) if candidate.legal else (190, 195, 202)
+        if selected:
+            color = GOOD_COLOR if (candidate.heuristic_delta or 0) >= 0 else BAD_COLOR
+        else:
+            color = (150, 160, 172) if candidate.legal else (190, 195, 202)
         _label(screen, candidate.action.name, (x, y + 3), 18, color)
         _bar(screen, pygame.Rect(x + 76, y + 6, max(50, width - 168), 12), candidate.probability, color)
         q_fraction = (candidate.q_value - min_q) / q_span if candidate.legal else 0.0
         _bar(screen, pygame.Rect(x + 76, y + 22, max(50, width - 168), 5), q_fraction, GOOD_COLOR if candidate.legal else BAR_BACKGROUND)
         q_text = f"{candidate.q_value:+.2f}" if candidate.legal else "illegal"
+        delta_text = f"d{candidate.heuristic_delta:+d}" if candidate.heuristic_delta is not None else ""
+        _label(screen, delta_text, (x + width - 104, y + 7), 15, color if candidate.legal else MUTED_COLOR)
         _label(screen, q_text, (x + width - 56, y + 7), 16, TEXT_COLOR if candidate.legal else MUTED_COLOR)
 
     hidden_top = row_top + 4 * 43 + 22
@@ -108,18 +113,29 @@ def draw_action_overlay(
     )
     delta_row, delta_col = ACTION_DELTAS[trace.selected_action]
     target = start + pygame.Vector2(delta_col * block_size, delta_row * block_size)
-    pygame.draw.line(screen, ACCENT_COLOR, start, target, max(3, block_size // 14))
+    selected = next(
+        (candidate for candidate in trace.candidates if candidate.action == trace.selected_action),
+        None,
+    )
+    overlay_color = (
+        GOOD_COLOR
+        if selected is not None and (selected.heuristic_delta or 0) >= 0
+        else BAD_COLOR
+        if selected is not None
+        else ACCENT_COLOR
+    )
+    pygame.draw.line(screen, overlay_color, start, target, max(3, block_size // 14))
     direction = target - start
     if direction.length_squared() == 0:
         return
     direction.scale_to_length(block_size * 0.22)
     side = pygame.Vector2(-direction.y, direction.x) * 0.55
     tip = target
-    pygame.draw.polygon(screen, ACCENT_COLOR, [tip, tip - direction + side, tip - direction - side])
+    pygame.draw.polygon(screen, overlay_color, [tip, tip - direction + side, tip - direction - side])
     target_rect = pygame.Rect(
         int(target.x - block_size / 2),
         int(target.y - block_size / 2),
         block_size,
         block_size,
     )
-    pygame.draw.rect(screen, ACCENT_COLOR, target_rect, max(2, block_size // 20))
+    pygame.draw.rect(screen, overlay_color, target_rect, max(2, block_size // 20))

@@ -101,7 +101,7 @@ class NeuralAgent:
             (candidate for candidate in candidates if candidate.legal),
             key=lambda candidate: candidate.combined_score,
         )
-        confidence = max(candidate.probability for candidate in candidates if candidate.legal)
+        confidence = selected.probability
         hidden_summary = tuple(float(value) for value in hidden_values[:8])
         return DecisionTrace(
             state=tuple(state),

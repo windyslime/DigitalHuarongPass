@@ -238,7 +238,10 @@ def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test
     running = True
     while running:
         tick = pygame.time.get_ticks()
-        panel_width = 380 if panel_visible else 0
+        panel_width = min(380, max(0, screen.get_width() - 520)) if panel_visible else 0
+        show_panel = panel_width >= 220
+        if not show_panel:
+            panel_width = 0
         board_area = pygame.Rect(0, 0, max(1, screen.get_width() - panel_width), screen.get_height())
         for event in pygame.event.get():
             if event.type == QUIT:
@@ -322,9 +325,9 @@ def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test
         if tick - move_blocks[2] >= MOVE_TIME and block_num != (-1, -1):
             highlight_blocks[(block_num[1], block_num[0])] = tick
         block_size = draw_board(screen, board, tick, win=win, end_tick=end_tick, area=board_area)
-        if ai_enabled and panel_visible:
+        if ai_enabled:
             draw_action_overlay(screen, board_area, block_size, trace)
-        if panel_visible:
+        if show_panel:
             draw_ai_panel(
                 screen,
                 pygame.Rect(screen.get_width() - panel_width, 0, panel_width, screen.get_height()),

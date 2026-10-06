@@ -8,6 +8,13 @@ from torch import nn
 
 
 MODEL_VERSION = "neural-solver-v1"
+BOARD_SIZE = [4, 4]
+NORMALIZATION = {
+    "blank_row": "divide_by_3",
+    "blank_col": "divide_by_3",
+    "manhattan": "divide_by_48",
+    "linear_conflict": "divide_by_24",
+}
 
 
 class HuarongNet(nn.Module):
@@ -41,6 +48,8 @@ def save_checkpoint(
     payload = {
         "model_version": MODEL_VERSION,
         "input_size": model.input_size,
+        "board_size": BOARD_SIZE,
+        "normalization": NORMALIZATION,
         "action_order": ["UP", "DOWN", "LEFT", "RIGHT"],
         "state_dict": model.state_dict(),
         "metadata": metadata or {},
@@ -58,6 +67,10 @@ def load_checkpoint(
         raise ValueError(f"unsupported model version: {payload.get('model_version')!r}")
     if payload.get("action_order") != ["UP", "DOWN", "LEFT", "RIGHT"]:
         raise ValueError("checkpoint action order does not match the runtime")
+    if payload.get("board_size") != BOARD_SIZE:
+        raise ValueError("checkpoint board size does not match the runtime")
+    if payload.get("normalization") != NORMALIZATION:
+        raise ValueError("checkpoint normalization does not match the runtime")
     model = HuarongNet(input_size=int(payload.get("input_size", 260)))
     model.load_state_dict(payload["state_dict"])
     model.to(device)

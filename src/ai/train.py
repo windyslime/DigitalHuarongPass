@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import random
 import shutil
 import subprocess
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -72,7 +73,7 @@ def train_imitation(
     batch_size: int = 128,
     learning_rate: float = 2e-3,
     device: str = "cpu",
-) -> tuple[HuarongNet, list[dict[str, float]]]:
+) -> tuple[HuarongNet, list[dict[str, float]], HuarongNet]:
     model = HuarongNet().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     policy_loss = nn.CrossEntropyLoss()
@@ -80,6 +81,9 @@ def train_imitation(
     train_loader = _loader(train_examples, batch_size, shuffle=True)
     validation_loader = _loader(validation_examples, batch_size, shuffle=False)
     history: list[dict[str, float]] = []
+    best_accuracy = -1.0
+    best_state: dict[str, torch.Tensor] | None = None
+    final_state: dict[str, torch.Tensor] | None = None
     for epoch in range(1, epochs + 1):
         model.train()
         total_loss = 0.0
@@ -106,15 +110,24 @@ def train_imitation(
                     (policy_loss(logits, actions) + 0.2 * q_loss(selected_q, target_q)).item()
                 ) * len(features)
                 correct += int((logits.argmax(dim=1) == actions).sum().item())
+        validation_accuracy = correct / validation_count
+        final_state = copy.deepcopy(model.state_dict())
         history.append(
             {
                 "epoch": float(epoch),
                 "train_loss": total_loss / len(train_examples),
                 "validation_loss": validation_total / len(validation_examples),
-                "validation_accuracy": correct / validation_count,
+                "validation_accuracy": validation_accuracy,
             }
         )
-    return model, history
+        if validation_accuracy > best_accuracy:
+            best_accuracy = validation_accuracy
+            best_state = copy.deepcopy(model.state_dict())
+    best_model = HuarongNet()
+    best_model.load_state_dict(best_state or model.state_dict())
+    final_model = HuarongNet()
+    final_model.load_state_dict(final_state or model.state_dict())
+    return best_model, history, final_model
 
 
 def _trace_to_dict(trace: DecisionTrace) -> dict[str, Any]:
@@ -150,6 +163,9 @@ def evaluate_agent(
     agent = NeuralAgent(model, device=device)
     solved = 0
     illegal = 0
+    decisions = 0
+    first_action_matches = 0
+    legal_decisions = 0
     steps_taken: list[int] = []
     inference_times: list[float] = []
     traces: list[DecisionTrace] = []
@@ -157,12 +173,17 @@ def evaluate_agent(
         environment = PuzzleEnvironment(example.state, max_steps=max_steps)
         for step in range(max_steps):
             trace = agent.decide(environment.state, step=step)
+            decisions += 1
+            if step == 0 and trace.selected_action == example.expert_action:
+                first_action_matches += 1
             if len(traces) < 3:
                 traces.append(trace)
             inference_times.append(trace.inference_ms)
             transition = environment.step(trace.selected_action)
             if not transition.legal:
                 illegal += 1
+            else:
+                legal_decisions += 1
             if transition.done:
                 if transition.state == goal_state():
                     solved += 1
@@ -176,7 +197,9 @@ def evaluate_agent(
             "solve_rate": solved / count if count else 0.0,
             "average_steps": sum(steps_taken) / len(steps_taken) if steps_taken else None,
             "illegal_actions": illegal,
-            "illegal_action_rate": illegal / max(1, count),
+            "illegal_action_rate": illegal / max(1, decisions),
+            "action_accuracy": first_action_matches / count if count else 0.0,
+            "legal_action_accuracy": legal_decisions / max(1, decisions),
             "average_inference_ms": sum(inference_times) / len(inference_times)
             if inference_times
             else 0.0,
@@ -188,12 +211,37 @@ def evaluate_agent(
     )
 
 
+def evaluate_random(
+    examples: tuple[Example, ...], *, max_steps: int = 120, seed: int = 1234
+) -> dict[str, Any]:
+    rng = random.Random(seed)
+    solved = 0
+    steps_taken: list[int] = []
+    for example in examples:
+        environment = PuzzleEnvironment(example.state, max_steps=max_steps)
+        for step in range(max_steps):
+            transition = environment.step(rng.choice(legal_actions(environment.state)))
+            if transition.done:
+                if transition.state == goal_state():
+                    solved += 1
+                    steps_taken.append(step + 1)
+                break
+    count = len(examples)
+    return {
+        "games": count,
+        "solved": solved,
+        "solve_rate": solved / count if count else 0.0,
+        "average_steps": sum(steps_taken) / len(steps_taken) if steps_taken else None,
+    }
+
+
 def train_dqn(
     model: HuarongNet,
     starts: tuple[Example, ...],
     *,
     episodes: int,
     seed: int,
+    eval_examples: tuple[Example, ...],
     max_steps: int = 80,
     device: str = "cpu",
 ) -> list[dict[str, float]]:
@@ -207,6 +255,10 @@ def train_dqn(
     gamma = 0.99
     epsilon = 1.0
     updates = 0
+    best_state = copy.deepcopy(model.state_dict())
+    best_solve_rate = -1.0
+    best_steps = float("inf")
+    eval_interval = max(1, episodes // 10)
     for episode in range(episodes):
         environment = PuzzleEnvironment(rng.choice(starts).state, max_steps=max_steps)
         episode_reward = 0.0
@@ -257,6 +309,22 @@ def train_dqn(
         epsilon = max(0.05, epsilon * 0.995)
         if episode == 0 or (episode + 1) % max(1, episodes // 20) == 0:
             history.append({"episode": float(episode + 1), "reward": episode_reward, "epsilon": epsilon})
+        if (episode + 1) % eval_interval == 0 or episode + 1 == episodes:
+            checkpoint_evaluation, _ = evaluate_agent(model, eval_examples, device=device)
+            current_steps = checkpoint_evaluation["average_steps"] or float("inf")
+            history[-1].update(
+                {
+                    "eval_solve_rate": checkpoint_evaluation["solve_rate"],
+                    "eval_average_steps": current_steps,
+                }
+            )
+            if checkpoint_evaluation["solve_rate"] > best_solve_rate or (
+                checkpoint_evaluation["solve_rate"] == best_solve_rate and current_steps < best_steps
+            ):
+                best_state = copy.deepcopy(model.state_dict())
+                best_solve_rate = checkpoint_evaluation["solve_rate"]
+                best_steps = current_steps
+    model.load_state_dict(best_state)
     return history
 
 
@@ -285,6 +353,12 @@ def write_training_report(
         json.dumps(metrics.get("config", {}), ensure_ascii=False, indent=2),
         "```",
         "",
+        "Dataset statistics: "
+        f"requested `{metrics.get('dataset', {}).get('requested', 'n/a')}`, "
+        f"train `{metrics.get('dataset', {}).get('train', 'n/a')}`, "
+        f"validation `{metrics.get('dataset', {}).get('validation', 'n/a')}`, "
+        f"label failures `{metrics.get('dataset', {}).get('label_failures', 0)}`.",
+        "",
         "## Evaluation",
         "",
         "| Metric | Value |",
@@ -294,9 +368,35 @@ def write_training_report(
         f"| Solve rate | {evaluation.get('solve_rate', 0):.2%} |",
         f"| Average steps | {evaluation.get('average_steps', 'n/a')} |",
         f"| A* average steps | {evaluation.get('astar_average_steps', 'n/a')} |",
+        f"| First-action accuracy | {evaluation.get('action_accuracy', 0):.2%} |",
+        f"| Legal-action accuracy | {evaluation.get('legal_action_accuracy', 0):.2%} |",
         f"| Illegal action rate | {evaluation.get('illegal_action_rate', 0):.2%} |",
         f"| Average inference time | {evaluation.get('average_inference_ms', 0):.3f} ms |",
         "",
+        "## Baselines And Checkpoint Selection",
+        "",
+    ]
+    baseline = metrics.get("baseline_evaluation")
+    if baseline:
+        lines.extend(
+            [
+                f"The DQN evaluation was compared with the supervised checkpoint: solve rate `{baseline.get('solve_rate', 0):.2%}`, average steps `{baseline.get('average_steps', 'n/a')}`.",
+                f"Selection: {metrics.get('selection_reason', 'no selection reason recorded')}",
+                "",
+            ]
+        )
+    elif metrics.get("selection_reason"):
+        lines.extend([f"Selection: {metrics['selection_reason']}", ""])
+    random_baseline = evaluation.get("random_baseline")
+    if random_baseline:
+        lines.extend(
+            [
+                f"Random legal-action baseline: solve rate `{random_baseline.get('solve_rate', 0):.2%}`, average steps `{random_baseline.get('average_steps', 'n/a')}`.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
         "## Training History",
         "",
         "```json",
@@ -305,7 +405,8 @@ def write_training_report(
         "",
         "## Decision Trace Samples",
         "",
-    ]
+        ]
+    )
     for index, trace in enumerate(traces, start=1):
         lines.extend(
             [
@@ -355,7 +456,7 @@ def run_training(
         "device": device,
         "seed": seed,
         "config": {
-            "samples": samples,
+            "samples": None if stage == "eval-only" else samples,
             "epochs": epochs,
             "episodes": episodes,
             "eval_games": eval_games,
@@ -366,24 +467,58 @@ def run_training(
     if stage == "imitation":
         examples = generate_examples(samples, seed=seed, min_depth=2, max_depth=12)
         train_examples, validation_examples = _split_examples(examples, seed)
-        model, history = train_imitation(
+        validation_model, history, final_model = train_imitation(
             train_examples,
             validation_examples,
             epochs=epochs,
             device=device,
         )
+        validation_path = model_dir / "imitation-validation.pt"
+        save_checkpoint(validation_path, validation_model, {"stage": "imitation-validation", "seed": seed})
+        validation_evaluation, _ = evaluate_agent(validation_model, eval_examples, device=device)
+        final_evaluation, _ = evaluate_agent(final_model, eval_examples, device=device)
+        model = validation_model
+        if final_evaluation["solve_rate"] > validation_evaluation["solve_rate"] or (
+            final_evaluation["solve_rate"] == validation_evaluation["solve_rate"]
+            and (final_evaluation["average_steps"] or float("inf"))
+            < (validation_evaluation["average_steps"] or float("inf"))
+        ):
+            final_path = model_dir / "final.pt"
+            save_checkpoint(final_path, final_model, {"stage": "imitation-final", "seed": seed})
+            selected_path = model_dir / "best.pt"
+            shutil.copyfile(final_path, selected_path)
+            model = final_model
+            metrics["selection_reason"] = "Final epoch improved held-out solving over the validation-best checkpoint."
+        else:
+            selected_path = model_dir / "best.pt"
+            shutil.copyfile(validation_path, selected_path)
+            metrics["selection_reason"] = "Validation-best checkpoint retained because it solved at least as many held-out states."
         checkpoint_path = model_dir / "imitation.pt"
-        save_checkpoint(checkpoint_path, model, {"stage": "imitation", "seed": seed})
-        selected_path = model_dir / "best.pt"
-        shutil.copyfile(checkpoint_path, selected_path)
-        metrics["dataset"] = {"train": len(train_examples), "validation": len(validation_examples)}
+        shutil.copyfile(selected_path, checkpoint_path)
+        metrics["validation_checkpoint_evaluation"] = validation_evaluation
+        metrics["final_checkpoint_evaluation"] = final_evaluation
+        metrics["dataset"] = {
+            "requested": samples,
+            "train": len(train_examples),
+            "validation": len(validation_examples),
+            "label_failures": 0,
+        }
         metrics["supervised"] = {"history": history}
     elif stage == "dqn":
         if checkpoint is None:
             raise ValueError("--checkpoint is required for DQN stage")
         model, metadata = load_checkpoint(checkpoint, device=device)
         starts = generate_examples(samples, seed=seed, min_depth=2, max_depth=12)
-        history = train_dqn(model, starts, episodes=episodes, seed=seed, max_steps=80, device=device)
+        metrics["dataset"] = {"requested": samples, "train": len(starts), "label_failures": 0}
+        history = train_dqn(
+            model,
+            starts,
+            episodes=episodes,
+            seed=seed,
+            eval_examples=eval_examples,
+            max_steps=80,
+            device=device,
+        )
         checkpoint_path = model_dir / "dqn.pt"
         save_checkpoint(checkpoint_path, model, {**metadata, "stage": "dqn", "seed": seed})
         baseline_model, _ = load_checkpoint(checkpoint, device=device)
@@ -393,15 +528,18 @@ def run_training(
         if checkpoint is None:
             raise ValueError("--checkpoint is required for eval-only stage")
         model, metadata = load_checkpoint(checkpoint, device=device)
+        metrics["dataset"] = {"requested": eval_games, "evaluation": eval_games, "label_failures": 0}
         history = [{"loaded_checkpoint": str(checkpoint), "stage": metadata.get("stage", "unknown")}]
         checkpoint_path = Path(checkpoint)
     else:
         raise ValueError(f"unknown training stage: {stage}")
 
     evaluation, traces = evaluate_agent(model, eval_examples, device=device)
+    evaluation["random_baseline"] = evaluate_random(eval_examples, seed=seed + 2000)
     metrics["evaluation"] = evaluation
     metrics["history"] = history
-    selected_path = checkpoint_path
+    if stage not in ("imitation", "dqn"):
+        selected_path = checkpoint_path
     if stage == "dqn":
         baseline = metrics["baseline_evaluation"]
         dqn_is_better = (
@@ -421,7 +559,7 @@ def run_training(
             metrics["selection_reason"] = "Supervised checkpoint retained because DQN did not improve evaluation."
     metrics["selected_checkpoint"] = str(selected_path)
     write_training_report(metrics, traces, report_path, metrics_path)
-    return TrainingResult(checkpoint_path, report_path, metrics_path)
+    return TrainingResult(selected_path, report_path, metrics_path)
 
 
 def main() -> None:
