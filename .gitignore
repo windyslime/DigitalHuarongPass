@@ -52,3 +52,17 @@ records/
 # Dashboard (Vue)
 dashboard/node_modules/
 src/game_chat_room/server/static/
+
+# Neural solver generated artifacts
+models/*.pt
+models/*.pth
+data/neural-solver/
+
+#study(wu)
+learning-records/
+lessons/
+reference/
+src/solver/
+MISSION.md
+NOTES.md
+RESOURCES.md
