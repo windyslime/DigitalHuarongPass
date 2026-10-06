@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import shutil
 import subprocess
 from collections import deque
 from dataclasses import asdict, dataclass
@@ -193,6 +194,7 @@ def train_dqn(
     *,
     episodes: int,
     seed: int,
+    max_steps: int = 80,
     device: str = "cpu",
 ) -> list[dict[str, float]]:
     rng = random.Random(seed)
@@ -200,37 +202,46 @@ def train_dqn(
     target_model = HuarongNet()
     target_model.load_state_dict(model.state_dict())
     target_model.to(device).eval()
-    replay: deque[tuple[PuzzleState, Action, float, PuzzleState, bool]] = deque(maxlen=20_000)
+    replay: deque[tuple[torch.Tensor, Action, float, torch.Tensor, bool]] = deque(maxlen=20_000)
     history: list[dict[str, float]] = []
     gamma = 0.99
     epsilon = 1.0
     updates = 0
     for episode in range(episodes):
-        environment = PuzzleEnvironment(rng.choice(starts).state, max_steps=120)
+        environment = PuzzleEnvironment(rng.choice(starts).state, max_steps=max_steps)
         episode_reward = 0.0
-        for _ in range(120):
+        for _ in range(max_steps):
             state = environment.state
+            state_features = encode_state(state)
             legal = legal_actions(state)
             if rng.random() < epsilon:
                 action = rng.choice(legal)
             else:
                 with torch.inference_mode():
-                    _, q_values = model(encode_state(state).unsqueeze(0).to(device))
+                    _, q_values = model(state_features.unsqueeze(0).to(device))
                 action = max(legal, key=lambda candidate: float(q_values[0, int(candidate)].item()))
             transition = environment.step(action)
-            replay.append((state, action, transition.reward, transition.state, transition.done))
+            replay.append(
+                (
+                    state_features,
+                    action,
+                    transition.reward,
+                    encode_state(transition.state),
+                    transition.done,
+                )
+            )
             episode_reward += transition.reward
             if len(replay) >= 64:
-                batch = rng.sample(replay, 64)
+                batch = rng.sample(replay, 32)
                 states, actions, rewards, next_states, dones = zip(*batch)
-                state_tensor = torch.stack([encode_state(state) for state in states]).to(device)
-                next_tensor = torch.stack([encode_state(state) for state in next_states]).to(device)
+                state_tensor = torch.stack(states).to(device)
+                next_tensor = torch.stack(next_states).to(device)
                 action_tensor = torch.tensor([int(action) for action in actions], device=device)
                 reward_tensor = torch.tensor(rewards, dtype=torch.float32, device=device)
                 done_tensor = torch.tensor(dones, dtype=torch.float32, device=device)
                 _, q_values = model(state_tensor)
                 selected = q_values.gather(1, action_tensor.unsqueeze(1)).squeeze(1)
-                with torch.inference_mode():
+                with torch.no_grad():
                     next_q = target_model(next_tensor)[1]
                     targets = reward_tensor + gamma * (1.0 - done_tensor) * next_q.max(dim=1).values
                 loss = nn.functional.smooth_l1_loss(selected, targets)
@@ -363,6 +374,8 @@ def run_training(
         )
         checkpoint_path = model_dir / "imitation.pt"
         save_checkpoint(checkpoint_path, model, {"stage": "imitation", "seed": seed})
+        selected_path = model_dir / "best.pt"
+        shutil.copyfile(checkpoint_path, selected_path)
         metrics["dataset"] = {"train": len(train_examples), "validation": len(validation_examples)}
         metrics["supervised"] = {"history": history}
     elif stage == "dqn":
@@ -370,9 +383,12 @@ def run_training(
             raise ValueError("--checkpoint is required for DQN stage")
         model, metadata = load_checkpoint(checkpoint, device=device)
         starts = generate_examples(samples, seed=seed, min_depth=2, max_depth=12)
-        history = train_dqn(model, starts, episodes=episodes, seed=seed, device=device)
+        history = train_dqn(model, starts, episodes=episodes, seed=seed, max_steps=80, device=device)
         checkpoint_path = model_dir / "dqn.pt"
         save_checkpoint(checkpoint_path, model, {**metadata, "stage": "dqn", "seed": seed})
+        baseline_model, _ = load_checkpoint(checkpoint, device=device)
+        baseline_evaluation, _ = evaluate_agent(baseline_model, eval_examples, device=device)
+        metrics["baseline_evaluation"] = baseline_evaluation
     elif stage == "eval-only":
         if checkpoint is None:
             raise ValueError("--checkpoint is required for eval-only stage")
@@ -385,7 +401,25 @@ def run_training(
     evaluation, traces = evaluate_agent(model, eval_examples, device=device)
     metrics["evaluation"] = evaluation
     metrics["history"] = history
-    metrics["selected_checkpoint"] = str(checkpoint_path)
+    selected_path = checkpoint_path
+    if stage == "dqn":
+        baseline = metrics["baseline_evaluation"]
+        dqn_is_better = (
+            evaluation["solve_rate"] > baseline["solve_rate"]
+            or (
+                evaluation["solve_rate"] == baseline["solve_rate"]
+                and (evaluation["average_steps"] or float("inf"))
+                < (baseline["average_steps"] or float("inf"))
+            )
+        )
+        selected_path = model_dir / "best.pt"
+        if dqn_is_better:
+            shutil.copyfile(checkpoint_path, selected_path)
+            metrics["selection_reason"] = "DQN improved held-out solve rate or average steps."
+        else:
+            shutil.copyfile(checkpoint, selected_path)
+            metrics["selection_reason"] = "Supervised checkpoint retained because DQN did not improve evaluation."
+    metrics["selected_checkpoint"] = str(selected_path)
     write_training_report(metrics, traces, report_path, metrics_path)
     return TrainingResult(checkpoint_path, report_path, metrics_path)
 

@@ -266,7 +266,7 @@ Run: `uv run python -m ai.train --stage imitation --samples 2500 --epochs 30 --e
 
 - [ ] **Step 3: Run DQN fine-tuning from the imitation checkpoint**
 
-Run: `uv run python -m ai.train --stage dqn --checkpoint models/imitation.pt --episodes 1000 --eval-games 100 --seed 42`
+Run: `uv run python -m ai.train --stage dqn --checkpoint models/imitation.pt --samples 1000 --episodes 300 --eval-games 100 --seed 42`
 
 - [ ] **Step 4: Generate the final evaluation report**
 
@@ -286,4 +286,3 @@ Review the diff for data leakage, action-direction mismatches, hidden reliance o
 git add README.md models/best.pt reports/
 git commit -m "docs: add neural solver training results"
 ```
-
