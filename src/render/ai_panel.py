@@ -26,6 +26,7 @@ ACTION_LABELS = {
 }
 MODEL_LABELS = {
     "sixth-generation": "第六代无拐杖数字华容道之神",
+    "第七代飞天数字华容道享受者.pt": "第七代飞天数字华容道享受者",
     "sixth-generation-fold": "第六代深度折模型",
     "cross-validation-ensemble": "第五代超级数字华容道之神",
     "cross-validation-fold": "交叉验证模型",
@@ -79,23 +80,58 @@ def draw_ai_panel(
     paused: bool = False,
     error: str | None = None,
     recent_actions: Sequence[str] = (),
-) -> None:
+    model_options: Sequence[tuple[str, Path]] = (),
+    model_dropdown_open: bool = False,
+) -> tuple[pygame.Rect, tuple[pygame.Rect, ...]]:
     pygame.draw.rect(screen, PANEL_BACKGROUND, area)
     pygame.draw.line(screen, PANEL_BORDER, area.topleft, area.bottomleft, 2)
     x = area.x + 18
     width = area.width - 36
     _label(screen, "人工智能决策轨迹", (x, area.y + 16), 22)
-    _label(screen, f"模型：{_model_label(model_name)}", (x, area.y + 48), 17, MUTED_COLOR)
+    selector_rect = pygame.Rect(x, area.y + 43, width, 32)
+    pygame.draw.rect(screen, (255, 255, 255), selector_rect, border_radius=4)
+    pygame.draw.rect(screen, PANEL_BORDER, selector_rect, 1, border_radius=4)
+    selected_label = _model_label(model_name)
+    if len(selected_label) > 27:
+        selected_label = selected_label[:26] + "…"
+    _label(screen, f"模型：{selected_label}", (selector_rect.x + 10, selector_rect.y + 7), 16, TEXT_COLOR)
+    arrow_x = selector_rect.right - 19
+    arrow_y = selector_rect.centery
+    arrow = (
+        [(arrow_x - 5, arrow_y - 2), (arrow_x + 5, arrow_y - 2), (arrow_x, arrow_y + 4)]
+        if not model_dropdown_open
+        else [(arrow_x - 5, arrow_y + 3), (arrow_x + 5, arrow_y + 3), (arrow_x, arrow_y - 4)]
+    )
+    pygame.draw.polygon(screen, MUTED_COLOR, arrow)
+    option_rects: list[pygame.Rect] = []
+    if model_dropdown_open:
+        for index, (_label_text, _path) in enumerate(model_options):
+            option_rect = pygame.Rect(
+                selector_rect.x,
+                selector_rect.bottom + index * 30,
+                selector_rect.width,
+                30,
+            )
+            option_rects.append(option_rect)
+
+    def draw_options() -> None:
+        for option_rect, (label, _path) in zip(option_rects, model_options):
+            pygame.draw.rect(screen, (255, 255, 255), option_rect)
+            pygame.draw.rect(screen, PANEL_BORDER, option_rect, 1)
+            option_label = label if len(label) <= 29 else label[:28] + "…"
+            _label(screen, option_label, (option_rect.x + 10, option_rect.y + 6), 15, TEXT_COLOR)
     status = "已暂停 / 单步" if paused else "运行中"
-    _label(screen, f"状态：{status}", (x, area.y + 70), 17, ACCENT_COLOR if not paused else MUTED_COLOR)
+    _label(screen, f"状态：{status}", (x, area.y + 84), 17, ACCENT_COLOR if not paused else MUTED_COLOR)
     if error:
-        _label(screen, "人工智能不可用", (x, area.y + 106), 19, BAD_COLOR)
-        _label(screen, f"错误：{error[:34]}", (x, area.y + 132), 16, BAD_COLOR)
-        return
+        _label(screen, "人工智能不可用", (x, area.y + 126), 19, BAD_COLOR)
+        _label(screen, f"错误：{error[:34]}", (x, area.y + 152), 16, BAD_COLOR)
+        draw_options()
+        return selector_rect, tuple(option_rects)
     if trace is None:
-        _label(screen, "按 A 键启动人工智能", (x, area.y + 118), 19, MUTED_COLOR)
-        _label(screen, "按 T 键隐藏面板", (x, area.y + 148), 17, MUTED_COLOR)
-        return
+        _label(screen, "按 A 键启动人工智能", (x, area.y + 138), 19, MUTED_COLOR)
+        _label(screen, "按 T 键隐藏面板", (x, area.y + 168), 17, MUTED_COLOR)
+        draw_options()
+        return selector_rect, tuple(option_rects)
 
     source = (
         "A* 循环保护"
@@ -108,20 +144,20 @@ def draw_ai_panel(
     )
     compact = width < 280
     if compact:
-        _label(screen, f"步数 {trace.step:03d}", (x, area.y + 104), 18)
-        _label(screen, f"置信度 {trace.confidence:.1%}", (x, area.y + 126), 17)
+        _label(screen, f"步数 {trace.step:03d}", (x, area.y + 124), 18)
+        _label(screen, f"置信度 {trace.confidence:.1%}", (x, area.y + 146), 17)
+        source_y = area.y + 168
+        agreement_y = area.y + 189
+        inference_y = area.y + 210
+        candidate_y = area.y + 242
+        row_top = area.y + 268
+    else:
+        _label(screen, f"步数 {trace.step:03d}   置信度 {trace.confidence:.1%}", (x, area.y + 124), 19)
         source_y = area.y + 148
         agreement_y = area.y + 169
         inference_y = area.y + 190
         candidate_y = area.y + 222
         row_top = area.y + 248
-    else:
-        _label(screen, f"步数 {trace.step:03d}   置信度 {trace.confidence:.1%}", (x, area.y + 104), 19)
-        source_y = area.y + 128
-        agreement_y = area.y + 149
-        inference_y = area.y + 170
-        candidate_y = area.y + 202
-        row_top = area.y + 228
     _label(screen, source, (x, source_y), 16, BAD_COLOR if trace.fallback_used else MUTED_COLOR)
     _label(screen, f"折模型一致性 {trace.fold_agreement:.0%}", (x, agreement_y), 16, BAD_COLOR if trace.fallback_used else MUTED_COLOR)
     _label(screen, f"推理耗时 {trace.inference_ms:.2f} 毫秒", (x, inference_y), 16, MUTED_COLOR)
@@ -168,6 +204,8 @@ def draw_ai_panel(
     _label(screen, "最近动作", (x, hidden_top + 82), 17, MUTED_COLOR)
     for index, action in enumerate(recent_actions[-5:]):
         _label(screen, _action_label(action), (x, hidden_top + 105 + index * 20), 16, TEXT_COLOR)
+    draw_options()
+    return selector_rect, tuple(option_rects)
 
 
 def draw_action_overlay(

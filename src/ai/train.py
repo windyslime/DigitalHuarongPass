@@ -680,6 +680,7 @@ def run_training(
     episodes: int = 1000,
     eval_games: int = 100,
     folds: int = 5,
+    train_max_depth: int = 1000,
     seed: int = 42,
     output_root: Path = Path("."),
     device: str = "cpu",
@@ -706,6 +707,7 @@ def run_training(
             "episodes": episodes,
             "eval_games": eval_games,
             "folds": folds,
+            "train_max_depth": train_max_depth if stage == "sixth-generation" else None,
             "board": "4x4",
         },
     }
@@ -831,11 +833,13 @@ def run_training(
             "the checkpoint metadata enables the A* guard in the interactive app."
         )
     elif stage == "sixth-generation":
+        if train_max_depth < 2:
+            raise ValueError("train_max_depth must be at least 2")
         examples = generate_trajectory_examples(
             samples,
             seed=seed,
             min_depth=2,
-            max_depth=24,
+            max_depth=train_max_depth,
         )
         models, fold_metrics, histories = train_cross_validation(
             examples,
@@ -856,6 +860,8 @@ def run_training(
                     "seed": seed,
                     "fold": fold_index,
                     "folds": folds,
+                    "train_min_depth": 2,
+                    "train_max_depth": train_max_depth,
                     "astar_guard": False,
                     "neural_planner": "beam",
                     "beam_width": 64,
@@ -881,7 +887,7 @@ def run_training(
         ensemble_models = base_models + models
         ensemble = EnsembleNeuralAgent(ensemble_models, device=device)
         ensemble_names = base_names + fold_names
-        selected_path = model_dir / "第六代无拐杖数字华容道之神.pt"
+        selected_path = model_dir / "第七代飞天数字华容道享受者.pt"
         save_checkpoint(
             selected_path,
             models[0],
@@ -889,9 +895,12 @@ def run_training(
                 "stage": "sixth-generation",
                 "seed": seed,
                 "folds": folds,
+                "train_min_depth": 2,
+                "train_max_depth": train_max_depth,
                 "ensemble_checkpoints": ensemble_names,
                 "astar_guard": False,
                 "offline_teacher": "weighted A*",
+                "display_name": "第七代飞天数字华容道享受者",
                 "neural_planner": "beam",
                 "beam_width": 64,
                 "beam_horizon": 80,
@@ -909,7 +918,7 @@ def run_training(
             "validation": len(examples) // folds,
             "label_failures": 0,
             "min_depth": 2,
-            "max_depth": 24,
+            "max_depth": train_max_depth,
         }
         metrics["cross_validation"] = {"folds": fold_metrics, "histories": histories}
         metrics["depth_buckets"] = evaluate_depth_buckets(
@@ -999,6 +1008,12 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=1000)
     parser.add_argument("--eval-games", type=int, default=100)
     parser.add_argument("--folds", type=int, default=5)
+    parser.add_argument(
+        "--train-max-depth",
+        type=int,
+        default=1000,
+        help="maximum random-walk depth used for sixth-generation teacher data",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-root", type=Path, default=Path("."))
     parser.add_argument("--device", default="cpu")

@@ -44,3 +44,16 @@ def test_trajectory_examples_are_unique_and_replay_to_goal():
     assert len(first) == 24
     assert len({example.state for example in first}) == 24
     assert all(_replay_teacher_route(example) == goal_state() for example in first)
+
+
+def test_trajectory_examples_support_long_training_walks():
+    examples = generate_trajectory_examples(
+        8,
+        seed=20261008,
+        min_depth=900,
+        max_depth=1000,
+    )
+
+    assert len(examples) == 8
+    assert len({example.state for example in examples}) == 8
+    assert all(_replay_teacher_route(example) == goal_state() for example in examples)

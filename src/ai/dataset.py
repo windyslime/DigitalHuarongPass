@@ -165,8 +165,10 @@ def generate_trajectory_examples(
 
     Initial states are sampled by deterministic random walks from the goal.  A
     weighted A* route is then replayed and each pre-goal state contributes one
-    supervised example.  ``count`` counts unique states, so overlapping routes
-    do not silently duplicate training samples.
+    supervised example.  ``max_depth`` is the random-walk difficulty budget;
+    it is not a claim that the resulting state's shortest solution has that
+    many moves.  ``count`` counts unique states, so overlapping routes do not
+    silently duplicate training samples.
     """
     if count <= 0:
         return ()
