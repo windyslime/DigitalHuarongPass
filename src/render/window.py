@@ -19,9 +19,8 @@ from config.render import (
 )
 from board import Board
 from board.board import generate_board
-from ai.agent import DecisionTrace, NeuralAgent
+from ai.agent import DecisionAgent, DecisionTrace, load_agent
 from ai.encoding import ACTION_DELTAS
-from ai.model import load_checkpoint
 from render.ai_panel import draw_action_overlay, draw_ai_panel
 
 logger = logging.getLogger("game.render")
@@ -211,7 +210,13 @@ def _reset_goal_board(board: Board) -> None:
     board.board[ROW_NUMBER - 1][COL_NUMBER - 1] = -1
 
 
-def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test: bool = False):
+def _reset_agent_history(agent: DecisionAgent | None) -> None:
+    reset = getattr(agent, "reset", None)
+    if callable(reset):
+        reset()
+
+
+def start(board: Board, *, model_path: Path = Path("models/第六代无拐杖数字华容道之神.pt"), smoke_test: bool = False):
     global move_blocks, blockRects, highlight_blocks
     pygame.init()
     screen: pygame.Surface = pygame.display.set_mode((1180, 720), pygame.RESIZABLE)
@@ -228,7 +233,7 @@ def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test
     ai_paused = False
     ai_step_requested = False
     panel_visible = True
-    agent: NeuralAgent | None = None
+    agent: DecisionAgent | None = None
     model_name = "not loaded"
     ai_error: str | None = None
     trace: DecisionTrace | None = None
@@ -271,8 +276,11 @@ def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test
                         trace = None
                     else:
                         try:
-                            model, metadata = load_checkpoint(model_path)
-                            agent = NeuralAgent(model, model_name=str(metadata.get("stage", model_path.name)))
+                            # The sixth-generation model is fully neural at runtime.
+                            # A* remains an offline training teacher only.
+                            loaded_agent, metadata = load_agent(model_path, use_guard=False)
+                            agent = loaded_agent  # type: ignore[assignment]
+                            _reset_agent_history(agent)
                             model_name = str(metadata.get("stage", model_path.name))
                             ai_error = None
                             ai_enabled = True
@@ -291,11 +299,13 @@ def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test
                     panel_visible = not panel_visible
                 elif event.key == K_r and not win:
                     _reset_random_board(board)
+                    _reset_agent_history(agent)
                     move_blocks = ((-1, -1), (-1, -1), tick - MOVE_TIME)
                     trace = None
                     recent_actions.clear()
                 elif event.key == K_ESCAPE:
                     _reset_goal_board(board)
+                    _reset_agent_history(agent)
                     move_blocks = ((-1, -1), (-1, -1), tick - MOVE_TIME)
                     trace = None
                     win = False
@@ -346,7 +356,7 @@ def start(board: Board, *, model_path: Path = Path("models/best.pt"), smoke_test
     pygame.quit()
 
 
-def main(*, model_path: Path = Path("models/best.pt"), smoke_test: bool = False) -> None:
+def main(*, model_path: Path = Path("models/第六代无拐杖数字华容道之神.pt"), smoke_test: bool = False) -> None:
     """控制台入口：建立棋盘、初始化日志并启动游戏窗口。"""
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     logger_ = logging.getLogger("game")
@@ -362,7 +372,7 @@ def main(*, model_path: Path = Path("models/best.pt"), smoke_test: bool = False)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run DigitalHuarongPass")
-    parser.add_argument("--model", type=Path, default=Path("models/best.pt"))
+    parser.add_argument("--model", type=Path, default=Path("models/第六代无拐杖数字华容道之神.pt"))
     parser.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     main(model_path=args.model, smoke_test=args.smoke_test)
