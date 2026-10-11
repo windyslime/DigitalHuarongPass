@@ -10,6 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable
 
 import torch
@@ -406,6 +407,7 @@ def evaluate_decider(
     *,
     max_steps: int = 120,
     device: str = "cpu",
+    move_time_ms: float = 300.0,
 ) -> tuple[dict[str, Any], list[DecisionTrace]]:
     solved = 0
     illegal = 0
@@ -416,14 +418,19 @@ def evaluate_decider(
     agreement_values: list[float] = []
     steps_taken: list[int] = []
     inference_times: list[float] = []
+    wall_times: list[float] = []
+    solved_30s = 0
     traces: list[DecisionTrace] = []
     for example in examples:
+        episode_started = perf_counter()
+        executed_steps = 0
         reset = getattr(agent, "reset", None)
         if callable(reset):
             reset()
         environment = PuzzleEnvironment(example.state, max_steps=max_steps)
         for step in range(max_steps):
             trace = agent.decide(environment.state, step=step)
+            executed_steps = step + 1
             decisions += 1
             if step == 0 and trace.selected_action == example.expert_action:
                 first_action_matches += 1
@@ -442,6 +449,10 @@ def evaluate_decider(
                     solved += 1
                     steps_taken.append(step + 1)
                 break
+        wall_time_ms = (perf_counter() - episode_started) * 1000.0 + executed_steps * move_time_ms
+        wall_times.append(wall_time_ms)
+        if environment.state == goal_state() and wall_time_ms <= 30_000.0:
+            solved_30s += 1
     count = len(examples)
     return (
         {
@@ -460,6 +471,11 @@ def evaluate_decider(
             "average_fold_agreement": sum(agreement_values) / len(agreement_values)
             if agreement_values
             else 1.0,
+            "solve_rate_30s": solved_30s / count if count else 0.0,
+            "average_wall_time_ms": sum(wall_times) / len(wall_times) if wall_times else 0.0,
+            "p95_wall_time_ms": sorted(wall_times)[max(0, int(len(wall_times) * 0.95) - 1)]
+            if wall_times
+            else 0.0,
             "astar_average_steps": sum(example.remaining_steps for example in examples) / count
             if count
             else None,
