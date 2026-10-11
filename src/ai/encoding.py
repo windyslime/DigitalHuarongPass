@@ -114,8 +114,12 @@ def heuristic_score(state: PuzzleState) -> int:
     return distance + 2 * conflicts
 
 
-def encode_state(state: PuzzleState) -> torch.Tensor:
-    """Encode a state into a fixed 260-value float tensor."""
+def encode_state(state: PuzzleState, *, include_heuristic: bool = True) -> torch.Tensor:
+    """Encode a state into a fixed 260-value float tensor.
+
+    The eighth-generation runtime passes ``include_heuristic=False`` so its
+    neural policy does not consult the handcrafted heuristic during inference.
+    """
     validate_state(state)
     values: list[float] = []
     for tile in state:
@@ -123,15 +127,18 @@ def encode_state(state: PuzzleState) -> torch.Tensor:
         values.extend(1.0 if position == index else 0.0 for position in range(BOARD_SIZE))
 
     blank_row, blank_col = blank_position(state)
-    manhattan = sum(
-        abs(row - divmod(value - 1, BOARD_SIDE)[0])
-        + abs(col - divmod(value - 1, BOARD_SIDE)[1])
-        for row in range(BOARD_SIDE)
-        for col in range(BOARD_SIDE)
-        for value in (state[row * BOARD_SIDE + col],)
-        if value != -1
-    )
-    conflicts = max(0, heuristic_score(state) - manhattan)
+    manhattan = 0.0
+    conflicts = 0.0
+    if include_heuristic:
+        manhattan = sum(
+            abs(row - divmod(value - 1, BOARD_SIDE)[0])
+            + abs(col - divmod(value - 1, BOARD_SIDE)[1])
+            for row in range(BOARD_SIDE)
+            for col in range(BOARD_SIDE)
+            for value in (state[row * BOARD_SIDE + col],)
+            if value != -1
+        )
+        conflicts = max(0, heuristic_score(state) - int(manhattan))
     values.extend(
         (
             blank_row / (BOARD_SIDE - 1),

@@ -187,6 +187,7 @@ def test_eighth_generation_embedded_agent_never_calls_astar(monkeypatch, tmp_pat
     )
     monkeypatch.setattr("ai.agent.astar_action", lambda state: (_ for _ in ()).throw(AssertionError("A* must not run")))
     monkeypatch.setattr("ai.agent.heuristic_score", lambda state: (_ for _ in ()).throw(AssertionError("heuristic must not run")))
+    monkeypatch.setattr("ai.encoding.heuristic_score", lambda state: (_ for _ in ()).throw(AssertionError("heuristic must not run")))
     monkeypatch.setattr("ai.agent.Board.get_road", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("A* must not run")))
 
     agent, metadata = load_agent(path, use_guard=False)

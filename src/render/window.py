@@ -35,6 +35,7 @@ move_blocks: tuple[tuple[int, int], tuple[int, int], int] = (
 
 
 _MODEL_OPTIONS: tuple[tuple[str, Path], ...] = (
+    ("第八代数字华容道高速王", Path("models/第八代数字华容道高速王.pt")),
     ("第七代飞天数字华容道享受者", Path("models/第七代飞天数字华容道享受者.pt")),
     ("第六代无拐杖数字华容道之神", Path("models/第六代无拐杖数字华容道之神.pt")),
     ("第五代超级数字华容道之神", Path("models/第五代超级数字华容道之神.pt")),
@@ -240,7 +241,7 @@ def _reset_agent_history(agent: DecisionAgent | None) -> None:
         reset()
 
 
-def start(board: Board, *, model_path: Path = Path("models/第七代飞天数字华容道享受者.pt"), smoke_test: bool = False):
+def start(board: Board, *, model_path: Path = Path("models/第八代数字华容道高速王.pt"), smoke_test: bool = False):
     global move_blocks, blockRects, highlight_blocks
     pygame.init()
     screen: pygame.Surface = pygame.display.set_mode((1180, 720), pygame.RESIZABLE)
@@ -419,7 +420,7 @@ def start(board: Board, *, model_path: Path = Path("models/第七代飞天数字
     pygame.quit()
 
 
-def main(*, model_path: Path = Path("models/第七代飞天数字华容道享受者.pt"), smoke_test: bool = False) -> None:
+def main(*, model_path: Path = Path("models/第八代数字华容道高速王.pt"), smoke_test: bool = False) -> None:
     """控制台入口：建立棋盘、初始化日志并启动游戏窗口。"""
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     logger_ = logging.getLogger("game")
@@ -435,7 +436,7 @@ def main(*, model_path: Path = Path("models/第七代飞天数字华容道享受
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run DigitalHuarongPass")
-    parser.add_argument("--model", type=Path, default=Path("models/第七代飞天数字华容道享受者.pt"))
+    parser.add_argument("--model", type=Path, default=Path("models/第八代数字华容道高速王.pt"))
     parser.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     main(model_path=args.model, smoke_test=args.smoke_test)

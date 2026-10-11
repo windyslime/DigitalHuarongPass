@@ -458,19 +458,23 @@ class EighthGenerationNeuralAgent:
         self._planned_actions: deque[Action] = deque()
         self.beam_failures = 0
         self.loop_events = 0
+        self._plan_cooldown = 0
 
     def reset(self) -> None:
         self._planned_state = None
         self._planned_actions.clear()
         self.beam_failures = 0
         self.loop_events = 0
+        self._plan_cooldown = 0
 
     def _predict(
         self, states: Sequence[PuzzleState]
     ) -> tuple[list[list[float]], list[list[float]], list[float], list[list[float]]]:
         if not states:
             return [], [], [], []
-        features = torch.stack([encode_state(state) for state in states]).to(self.device)
+        features = torch.stack(
+            [encode_state(state, include_heuristic=False) for state in states]
+        ).to(self.device)
         policy_values: list[list[list[float]]] = []
         q_values: list[list[list[float]]] = []
         distances: list[list[float]] = []
@@ -580,9 +584,14 @@ class EighthGenerationNeuralAgent:
         state = tuple(state)
         started = perf_counter()
         if self._planned_state != state or not self._planned_actions:
-            plan = self._plan(state)
-            self._planned_state = state
-            self._planned_actions = deque(plan or ())
+            if self._plan_cooldown <= 0:
+                plan = self._plan(state)
+                self._planned_state = state
+                self._planned_actions = deque(plan or ())
+                if plan is None:
+                    self._plan_cooldown = 8
+            else:
+                self._plan_cooldown -= 1
         trace = self._trace(state, step=step, inference_ms=(perf_counter() - started) * 1000.0)
         if not self._planned_actions:
             return DecisionTrace(
