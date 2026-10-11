@@ -1,5 +1,12 @@
-from ai.dataset import generate_examples, generate_trajectory_examples
-from ai.encoding import ACTION_DELTAS, apply_action, goal_state
+from ai.dataset import (
+    augment_example,
+    collect_dagger_examples,
+    generate_examples,
+    generate_trajectory_examples,
+)
+from ai.agent import NeuralAgent
+from ai.encoding import ACTION_DELTAS, Action, apply_action, goal_state
+from ai.model import HuarongNet
 from board import Board
 from board.board import END
 
@@ -57,3 +64,27 @@ def test_trajectory_examples_support_long_training_walks():
     assert len(examples) == 8
     assert len({example.state for example in examples}) == 8
     assert all(_replay_teacher_route(example) == goal_state() for example in examples)
+
+
+def test_horizontal_reflection_swaps_left_and_right_labels():
+    from ai.dataset import Example
+
+    example = Example(goal_state(), Action.LEFT, 1)
+    augmented = augment_example(example)
+
+    assert len(augmented) == 8
+    assert augmented[4].expert_action == Action.RIGHT
+
+
+def test_dagger_collection_returns_unique_teacher_labeled_states():
+    start = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, -1, 14, 15)
+    examples = collect_dagger_examples(
+        NeuralAgent(HuarongNet()),
+        [start],
+        max_steps=4,
+        seed=5,
+    )
+
+    assert examples
+    assert len({example.state for example in examples}) == len(examples)
+    assert all(apply_action(example.state, example.expert_action) is not None for example in examples)

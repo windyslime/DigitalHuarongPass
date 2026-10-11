@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from typing import Any, Sequence
 
 from board import Board
 from board.board import END
@@ -21,6 +22,9 @@ class Example:
     state: PuzzleState
     expert_action: Action
     remaining_steps: int
+    next_state: PuzzleState | None = None
+    distance_bucket: int | None = None
+    risk_target: tuple[float, ...] | None = None
 
 
 _DIRECTION_TO_ACTION = {
@@ -125,7 +129,119 @@ def _label_state(state: PuzzleState) -> Example | None:
     if not trajectory:
         return None
     route_state, action, remaining_steps = trajectory[0]
-    return Example(route_state, action, remaining_steps)
+    next_state = apply_action(route_state, action)
+    return Example(
+        route_state,
+        action,
+        remaining_steps,
+        next_state=next_state,
+        distance_bucket=min(96, remaining_steps),
+    )
+
+
+_ACTION_VECTOR = {
+    Action.UP: (-1, 0),
+    Action.DOWN: (1, 0),
+    Action.LEFT: (0, -1),
+    Action.RIGHT: (0, 1),
+}
+_VECTOR_ACTION = {vector: action for action, vector in _ACTION_VECTOR.items()}
+
+
+def _transform_state(
+    state: PuzzleState,
+    transform: int,
+) -> tuple[PuzzleState, dict[Action, Action]]:
+    """Apply one of the eight board symmetries and transform actions with it."""
+    values = [[state[row * 4 + col] for col in range(4)] for row in range(4)]
+
+    def map_position(row: int, col: int) -> tuple[int, int]:
+        for _ in range(transform % 4):
+            row, col = col, 3 - row
+        if transform >= 4:
+            col = 3 - col
+        return row, col
+
+    transformed = [-1] * 16
+    for row in range(4):
+        for col in range(4):
+            target_row, target_col = map_position(row, col)
+            transformed[target_row * 4 + target_col] = values[row][col]
+
+    action_map: dict[Action, Action] = {}
+    for action, (delta_row, delta_col) in _ACTION_VECTOR.items():
+        origin = map_position(1, 1)
+        target = map_position(1 + delta_row, 1 + delta_col)
+        mapped_vector = (target[0] - origin[0], target[1] - origin[1])
+        action_map[action] = _VECTOR_ACTION[mapped_vector]
+    return tuple(transformed), action_map
+
+
+def augment_example(example: Example) -> tuple[Example, ...]:
+    """Return deterministic D4 augmentations with action labels transformed."""
+    augmented: list[Example] = []
+    for transform in range(8):
+        state, action_map = _transform_state(example.state, transform)
+        next_state = None
+        if example.next_state is not None:
+            next_state, _ = _transform_state(example.next_state, transform)
+        augmented.append(
+            Example(
+                state=state,
+                expert_action=action_map[example.expert_action],
+                remaining_steps=example.remaining_steps,
+                next_state=next_state,
+                distance_bucket=example.distance_bucket,
+                risk_target=example.risk_target,
+            )
+        )
+    return tuple(augmented)
+
+
+def collect_dagger_examples(
+    agent: Any,
+    starts: Sequence[PuzzleState | Example],
+    *,
+    max_steps: int = 80,
+    seed: int = 42,
+) -> tuple[Example, ...]:
+    """Collect model-visited states and relabel them with the offline teacher."""
+    rng = random.Random(seed)
+    states = [start.state if isinstance(start, Example) else tuple(start) for start in starts]
+    rng.shuffle(states)
+    collected: list[Example] = []
+    seen: set[PuzzleState] = set()
+    for initial in states:
+        reset = getattr(agent, "reset", None)
+        if callable(reset):
+            reset()
+        current = initial
+        for step in range(max_steps):
+            if current in seen or current == goal_state():
+                break
+            seen.add(current)
+            trajectory = _teacher_trajectory(current)
+            if trajectory:
+                teacher_state, action, remaining_steps = trajectory[0]
+                next_state = apply_action(teacher_state, action)
+                collected.append(
+                    Example(
+                        teacher_state,
+                        action,
+                        remaining_steps,
+                        next_state=next_state,
+                        distance_bucket=min(96, remaining_steps),
+                    )
+                )
+            trace = agent.decide(current, step=step)
+            next_state = apply_action(current, trace.selected_action)
+            if next_state is None:
+                break
+            current = next_state
+    unique: dict[PuzzleState, Example] = {}
+    for example in collected:
+        unique.setdefault(example.state, example)
+    return tuple(unique.values())
 
 
 def generate_examples(
@@ -199,7 +315,16 @@ def generate_trajectory_examples(
             if state in seen_states:
                 continue
             seen_states.add(state)
-            examples.append(Example(state, action, remaining_steps))
+            next_state = apply_action(state, action)
+            examples.append(
+                Example(
+                    state,
+                    action,
+                    remaining_steps,
+                    next_state=next_state,
+                    distance_bucket=min(96, remaining_steps),
+                )
+            )
             if len(examples) >= count:
                 break
 
