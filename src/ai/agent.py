@@ -50,6 +50,10 @@ class DecisionTrace:
     fold_agreement: float = 1.0
     fallback_used: bool = False
     decision_source: str = "neural"
+    predicted_distance: float | None = None
+    risk: float | None = None
+    beam_failure: bool = False
+    loop_detected: bool = False
 
 
 class DecisionAgent(Protocol):
@@ -430,6 +434,174 @@ class NeuralBeamAgent:
         )
 
 
+class EighthGenerationNeuralAgent:
+    """Pure-neural ensemble planner for the self-contained v8 checkpoint."""
+
+    def __init__(
+        self,
+        models: Sequence[HuarongNet],
+        *,
+        device: str | torch.device = "cpu",
+        beam_width: int = 32,
+        horizon: int = 96,
+    ):
+        if not models:
+            raise ValueError("an eighth-generation ensemble requires at least one model")
+        if beam_width < 1 or horizon < 1:
+            raise ValueError("beam_width and horizon must be positive")
+        self.models = tuple(model.to(device).eval() for model in models)
+        self.device = torch.device(device)
+        self.beam_width = beam_width
+        self.horizon = horizon
+        self.model_name = "第八代数字华容道高速王"
+        self._planned_state: PuzzleState | None = None
+        self._planned_actions: deque[Action] = deque()
+        self.beam_failures = 0
+        self.loop_events = 0
+
+    def reset(self) -> None:
+        self._planned_state = None
+        self._planned_actions.clear()
+        self.beam_failures = 0
+        self.loop_events = 0
+
+    def _predict(
+        self, states: Sequence[PuzzleState]
+    ) -> tuple[list[list[float]], list[list[float]], list[float], list[list[float]]]:
+        if not states:
+            return [], [], [], []
+        features = torch.stack([encode_state(state) for state in states]).to(self.device)
+        policy_values: list[list[list[float]]] = []
+        q_values: list[list[list[float]]] = []
+        distances: list[list[float]] = []
+        risks: list[list[list[float]]] = []
+        with torch.inference_mode():
+            for model in self.models:
+                outputs = model.forward_full(features)
+                policy_values.append(torch.softmax(outputs["policy_logits"], dim=1).cpu().tolist())
+                q_values.append(outputs["q_values"].cpu().tolist())
+                distances.append(outputs["distance"].squeeze(1).cpu().tolist())
+                risks.append(torch.sigmoid(outputs["risk_logits"]).cpu().tolist())
+        count = len(self.models)
+        probabilities = [
+            [sum(values[state_index][action_index] for values in policy_values) / count for action_index in range(4)]
+            for state_index in range(len(states))
+        ]
+        averaged_q = [
+            [sum(values[state_index][action_index] for values in q_values) / count for action_index in range(4)]
+            for state_index in range(len(states))
+        ]
+        averaged_distance = [
+            sum(values[state_index] for values in distances) / count
+            for state_index in range(len(states))
+        ]
+        averaged_risk = [
+            [sum(values[state_index][action_index] for values in risks) / count for action_index in range(4)]
+            for state_index in range(len(states))
+        ]
+        return probabilities, averaged_q, averaged_distance, averaged_risk
+
+    def _plan(self, start: PuzzleState) -> tuple[Action, ...] | None:
+        beam: list[tuple[PuzzleState, tuple[Action, ...], float, frozenset[PuzzleState]]] = [
+            (start, (), 0.0, frozenset({start}))
+        ]
+        for _ in range(self.horizon):
+            candidates: list[tuple[PuzzleState, tuple[Action, ...], float, frozenset[PuzzleState]]] = []
+            states = [state for state, _, _, _ in beam]
+            probabilities, q_values, distances, risks = self._predict(states)
+            for index, (state, actions, score, seen) in enumerate(beam):
+                if state == goal_state():
+                    return actions
+                legal = legal_actions(state)
+                q_min = min((q_values[index][int(action)] for action in legal), default=0.0)
+                q_span = max((q_values[index][int(action)] for action in legal), default=1.0) - q_min or 1.0
+                for action in legal:
+                    next_state = apply_action(state, action)
+                    if next_state is None:
+                        continue
+                    if next_state in seen:
+                        self.loop_events += 1
+                        continue
+                    q_norm = (q_values[index][int(action)] - q_min) / q_span
+                    action_score = (
+                        math.log(max(probabilities[index][int(action)], 1e-9))
+                        + 0.12 * q_norm
+                        - 0.35 * risks[index][int(action)]
+                    )
+                    candidates.append((next_state, actions + (action,), score + action_score, seen | {next_state}))
+            if not candidates:
+                self.beam_failures += 1
+                return None
+            candidates.sort(key=lambda candidate: candidate[2], reverse=True)
+            beam = candidates[: self.beam_width]
+        self.beam_failures += 1
+        return None
+
+    def _trace(self, state: PuzzleState, *, step: int, inference_ms: float) -> DecisionTrace:
+        probabilities, q_values, distances, risks = self._predict((state,))
+        policy = probabilities[0]
+        q = q_values[0]
+        risk = risks[0]
+        legal = set(legal_actions(state))
+        selected = max(legal, key=lambda action: math.log(max(policy[int(action)], 1e-9)) - 0.35 * risk[int(action)])
+        candidates = tuple(
+            ActionScore(
+                action=action,
+                legal=action in legal,
+                probability=float(policy[int(action)]),
+                q_value=float(q[int(action)]),
+                heuristic_after=None,
+                heuristic_delta=None,
+                combined_score=float(
+                    math.log(max(policy[int(action)], 1e-9)) - 0.35 * risk[int(action)]
+                    if action in legal
+                    else float("-inf")
+                ),
+            )
+            for action in Action
+        )
+        return DecisionTrace(
+            state=tuple(state),
+            blank_position=blank_position(state),
+            candidates=candidates,
+            selected_action=selected,
+            confidence=float(policy[int(selected)]),
+            inference_ms=inference_ms,
+            step=step,
+            hidden_summary=(),
+            fold_agreement=1.0,
+            decision_source="eighth-generation-neural-beam",
+            predicted_distance=float(max(0.0, distances[0])),
+            risk=float(risk[int(selected)]),
+            beam_failure=False,
+        )
+
+    def decide(self, state: PuzzleState, *, step: int = 0) -> DecisionTrace:
+        state = tuple(state)
+        started = perf_counter()
+        if self._planned_state != state or not self._planned_actions:
+            plan = self._plan(state)
+            self._planned_state = state
+            self._planned_actions = deque(plan or ())
+        trace = self._trace(state, step=step, inference_ms=(perf_counter() - started) * 1000.0)
+        if not self._planned_actions:
+            return DecisionTrace(
+                **{**trace.__dict__, "beam_failure": True},
+            )
+        selected_action = self._planned_actions.popleft()
+        next_state = apply_action(state, selected_action)
+        self._planned_state = next_state
+        candidate = next(candidate for candidate in trace.candidates if candidate.action == selected_action)
+        return DecisionTrace(
+            **{
+                **trace.__dict__,
+                "selected_action": selected_action,
+                "confidence": candidate.probability,
+                "beam_failure": False,
+            }
+        )
+
+
 def _build_trace(
     state: PuzzleState,
     probabilities: Sequence[float],
@@ -565,9 +737,20 @@ def load_agent(
     use_guard: bool = True,
 ) -> tuple[DecisionAgent, dict[str, object]]:
     """Load a single checkpoint or the ensemble metadata embedded in one."""
-    from .model import load_checkpoint
+    from .model import load_checkpoint, load_ensemble_checkpoint
 
     checkpoint = Path(checkpoint)
+    payload = torch.load(checkpoint, map_location=device, weights_only=False)
+    if payload.get("checkpoint_kind") == "embedded-ensemble":
+        models, metadata = load_ensemble_checkpoint(checkpoint, device=device)
+        if metadata.get("stage") == "eighth-generation" or metadata.get("model_name") == "第八代数字华容道高速王":
+            return EighthGenerationNeuralAgent(
+                models,
+                device=device,
+                beam_width=int(metadata.get("beam_width", 32)),
+                horizon=int(metadata.get("beam_horizon", 96)),
+            ), metadata
+        return EnsembleNeuralAgent(models, device=device), metadata
     model, metadata = load_checkpoint(checkpoint, device=device)
     ensemble_names = metadata.get("ensemble_checkpoints")
     if isinstance(ensemble_names, list) and ensemble_names:
