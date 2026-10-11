@@ -1290,7 +1290,13 @@ def run_training(
         early_agent = EighthGenerationNeuralAgent(
             [HuarongNet()], device=device, beam_width=8, horizon=24
         )
-        video_states = [example.state for example in eval_examples[: max(1, video_games)]]
+        video_examples = generate_examples(
+            max(1, video_games),
+            seed=seed + 3000,
+            min_depth=16,
+            max_depth=24,
+        )
+        video_states = [example.state for example in video_examples]
         frame_count = render_comparison_frames(
             early_agent,
             agent,
