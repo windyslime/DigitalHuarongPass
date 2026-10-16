@@ -22,3 +22,10 @@ def test_model_dropdown_lists_available_named_models():
 
     assert "第七代飞天数字华容道享受者" in labels
     assert _model_option_label(Path("models/第七代飞天数字华容道享受者.pt"), options) == "第七代飞天数字华容道享受者"
+
+
+def test_model_dropdown_always_offers_astar_solver():
+    options = _available_model_options(Path("models/missing.pt"))
+    labels = [label for label, _path in options]
+
+    assert "A* 求解器" in labels

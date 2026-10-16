@@ -1,6 +1,7 @@
 import torch
 
 from ai.agent import (
+    AStarAgent,
     AStarGuardedAgent,
     DecisionTrace,
     EnsembleNeuralAgent,
@@ -170,3 +171,55 @@ def test_neural_beam_agent_reset_discards_cached_plan():
     agent.reset()
     agent.decide(state)
     assert plan_calls == 2
+
+
+def test_astar_agent_solves_one_move_state_in_a_single_step():
+    state = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, -1, 15)
+    agent = AStarAgent()
+
+    trace = agent.decide(state, step=5)
+
+    assert trace.selected_action == Action.RIGHT
+    assert trace.decision_source == "astar"
+    assert trace.step == 5
+    assert trace.confidence == 1.0
+    selected = next(c for c in trace.candidates if c.action == Action.RIGHT)
+    assert selected.legal and selected.heuristic_after == 0
+
+
+def test_astar_agent_follows_cached_route_and_reset_replans():
+    state = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, -1, 14, 15)
+    agent = AStarAgent()
+    plan_calls = 0
+    original_plan = agent._plan
+
+    def counting_plan(start):
+        nonlocal plan_calls
+        plan_calls += 1
+        return original_plan(start)
+
+    agent._plan = counting_plan
+
+    first = agent.decide(state)
+    assert first.selected_action == Action.RIGHT
+    next_state = apply_action(state, first.selected_action)
+    assert next_state is not None
+    second = agent.decide(next_state)
+    assert second.selected_action == Action.RIGHT
+    assert plan_calls == 1  # 第二步走缓存的解路，不重新搜索
+
+    agent.reset()
+    agent.decide(state)
+    assert plan_calls == 2
+
+
+def test_astar_agent_replans_after_external_board_change():
+    state = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, -1, 15)
+    other = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, -1, 14, 15)
+    agent = AStarAgent()
+
+    agent.decide(state)
+    trace = agent.decide(other)
+
+    assert trace.selected_action in legal_actions(other)
+    assert trace.decision_source == "astar"

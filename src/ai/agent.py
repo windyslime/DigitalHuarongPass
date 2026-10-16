@@ -558,6 +558,112 @@ def astar_action(state: PuzzleState) -> Action | None:
     return direction_to_action.get(direction)
 
 
+def _astar_trace(
+    state: PuzzleState,
+    selected: Action,
+    step: int,
+    inference_ms: float,
+) -> DecisionTrace:
+    """把一次搜索决策包装成面板可显示的轨迹（没有神经网络输出）。"""
+    current_heuristic = heuristic_score(state)
+    legal = set(legal_actions(state))
+    candidates: list[ActionScore] = []
+    for action in Action:
+        next_state = apply_action(state, action)
+        is_legal = action in legal
+        after = heuristic_score(next_state) if next_state is not None else None
+        delta = current_heuristic - after if after is not None else None
+        candidates.append(
+            ActionScore(
+                action=action,
+                legal=is_legal,
+                probability=1.0 if action == selected and is_legal else 0.0,
+                q_value=float(-after) if after is not None else float("-inf"),
+                heuristic_after=after,
+                heuristic_delta=delta,
+                combined_score=1.0 if action == selected else 0.0,
+            )
+        )
+    return DecisionTrace(
+        state=tuple(state),
+        blank_position=blank_position(state),
+        candidates=tuple(candidates),
+        selected_action=selected,
+        confidence=1.0,
+        inference_ms=inference_ms,
+        step=step,
+        hidden_summary=(0.0, 0.0, 0.0, 0.0),
+        fold_agreement=1.0,
+        decision_source="astar",
+    )
+
+
+class AStarAgent:
+    """加权 A* 求解器：开局算一次完整解路，之后照路走。
+
+    实现 DecisionAgent 协议（decide/reset），因此主循环的暂停、单步、
+    箭头高亮和右侧面板都能直接复用；盘面被外部改动（重置、手动干预）时
+    传入的 state 和缓存的规划状态对不上，会自动重新规划。
+    """
+
+    def __init__(self, *, weight: float = 2.0):
+        if weight <= 0:
+            raise ValueError("weight 必须为正数")
+        self.weight = weight
+        self.model_name = "astar"
+        self._planned_state: PuzzleState | None = None
+        self._planned_actions: deque[Action] = deque()
+
+    def reset(self) -> None:
+        self._planned_state = None
+        self._planned_actions.clear()
+
+    def _plan(self, start: PuzzleState) -> tuple[Action, ...]:
+        """跑一次加权 A*，把 get_road 的 (列增量, 行增量) 映射成 Action 序列。"""
+        size = math.isqrt(len(start))
+        board = Board(size, size)
+        board.board = [list(start[row * size : (row + 1) * size]) for row in range(size)]
+        direction_to_action = {
+            (delta_col, delta_row): action
+            for action, (delta_row, delta_col) in ACTION_DELTAS.items()
+        }
+        actions: list[Action] = []
+        for item in board.get_road(weight=self.weight):
+            if item is END:
+                break
+            if not isinstance(item, tuple):
+                return ()
+            action = direction_to_action.get((item[0], item[1]))
+            if action is None:
+                return ()
+            actions.append(action)
+        return tuple(actions)
+
+    def decide(self, state: PuzzleState, *, step: int = 0) -> DecisionTrace:
+        state = tuple(state)
+        plan_ms = 0.0
+        if self._planned_state != state or not self._planned_actions:
+            started = perf_counter()
+            plan = self._plan(state)
+            plan_ms = (perf_counter() - started) * 1000.0
+            self._planned_actions = deque(plan)
+        if self._planned_actions:
+            selected = self._planned_actions.popleft()
+        else:
+            # 搜索没给出解路时退回启发式贪心，保证面板和游戏不中断
+            legal = legal_actions(state)
+            if not legal:
+                raise RuntimeError("A*: 当前局面没有可走动作")
+
+            def successor_heuristic(action: Action) -> int:
+                after = apply_action(state, action)
+                return heuristic_score(after) if after is not None else 10**9
+
+            selected = max(legal, key=lambda action: -successor_heuristic(action))
+        self._planned_state = apply_action(state, selected)
+        return _astar_trace(state, selected, step, plan_ms)
+
+
 def load_agent(
     checkpoint: str | Path,
     *,
