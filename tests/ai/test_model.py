@@ -7,6 +7,7 @@ from ai.model import (
     save_checkpoint,
     save_ensemble_checkpoint,
 )
+from ai.encoding import ENHANCED_FEATURE_SIZE
 
 
 def test_network_has_two_four_action_heads():
@@ -26,6 +27,14 @@ def test_eighth_generation_full_outputs_have_expected_shapes():
     assert outputs["distance"].shape == (3, 1)
     assert outputs["distance_logits"].shape == (3, 97)
     assert outputs["risk_logits"].shape == (3, 4)
+
+
+def test_enhanced_model_accepts_v3_state_representation():
+    model = HuarongNet(input_size=ENHANCED_FEATURE_SIZE)
+    outputs = model.forward_full(torch.zeros(2, ENHANCED_FEATURE_SIZE))
+
+    assert outputs["policy_logits"].shape == (2, 4)
+    assert outputs["distance"].shape == (2, 1)
 
 
 def test_checkpoint_round_trip(tmp_path):

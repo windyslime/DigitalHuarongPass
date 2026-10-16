@@ -19,6 +19,7 @@ from .encoding import (
     apply_action,
     blank_position,
     encode_state,
+    encode_state_enhanced,
     goal_state,
     heuristic_score,
     legal_actions,
@@ -160,7 +161,12 @@ class NeuralAgent:
         self._visit_counts.clear()
 
     def decide(self, state: PuzzleState, *, step: int = 0) -> DecisionTrace:
-        features = encode_state(state).unsqueeze(0).to(self.device)
+        encoder = (
+            encode_state_enhanced
+            if getattr(self.model, "input_size", 260) >= 400
+            else encode_state
+        )
+        features = encoder(state).unsqueeze(0).to(self.device)
         started = perf_counter()
         with torch.inference_mode():
             policy_logits, q_values = self.model(features)
@@ -258,7 +264,12 @@ class EnsembleNeuralAgent:
         self._visit_counts.clear()
 
     def decide(self, state: PuzzleState, *, step: int = 0) -> DecisionTrace:
-        features = encode_state(state).unsqueeze(0).to(self.device)
+        encoder = (
+            encode_state_enhanced
+            if getattr(self.models[0], "input_size", 260) >= 400
+            else encode_state
+        )
+        features = encoder(state).unsqueeze(0).to(self.device)
         started = perf_counter()
         policy_probabilities: list[list[float]] = []
         q_values: list[list[float]] = []
@@ -459,6 +470,12 @@ class EighthGenerationNeuralAgent:
         self.beam_failures = 0
         self.loop_events = 0
         self._plan_cooldown = 0
+        # Fallback decisions need episode-level memory.  The beam already
+        # deduplicates states inside one plan, but a failed plan used to drop
+        # that history and could immediately reverse the previous move.
+        self._recent_states: deque[PuzzleState] = deque(maxlen=32)
+        self._visit_counts: dict[PuzzleState, int] = {}
+        self._previous_action: Action | None = None
 
     def reset(self) -> None:
         self._planned_state = None
@@ -466,15 +483,21 @@ class EighthGenerationNeuralAgent:
         self.beam_failures = 0
         self.loop_events = 0
         self._plan_cooldown = 0
+        self._recent_states.clear()
+        self._visit_counts.clear()
+        self._previous_action = None
 
     def _predict(
         self, states: Sequence[PuzzleState]
     ) -> tuple[list[list[float]], list[list[float]], list[float], list[list[float]]]:
         if not states:
             return [], [], [], []
-        features = torch.stack(
-            [encode_state(state, include_heuristic=False) for state in states]
-        ).to(self.device)
+        encoder = (
+            encode_state_enhanced
+            if getattr(self.models[0], "input_size", 260) >= 400
+            else lambda state: encode_state(state, include_heuristic=False)
+        )
+        features = torch.stack([encoder(state) for state in states]).to(self.device)
         policy_values: list[list[list[float]]] = []
         q_values: list[list[list[float]]] = []
         distances: list[list[float]] = []
@@ -510,7 +533,9 @@ class EighthGenerationNeuralAgent:
             (start, (), 0.0, frozenset({start}))
         ]
         for _ in range(self.horizon):
-            candidates: list[tuple[PuzzleState, tuple[Action, ...], float, frozenset[PuzzleState]]] = []
+            candidates: list[
+                tuple[PuzzleState, tuple[Action, ...], float, frozenset[PuzzleState], Action]
+            ] = []
             states = [state for state, _, _, _ in beam]
             probabilities, q_values, distances, risks = self._predict(states)
             for index, (state, actions, score, seen) in enumerate(beam):
@@ -532,12 +557,46 @@ class EighthGenerationNeuralAgent:
                         + 0.12 * q_norm
                         - 0.35 * risks[index][int(action)]
                     )
-                    candidates.append((next_state, actions + (action,), score + action_score, seen | {next_state}))
+                    candidates.append(
+                        (
+                            next_state,
+                            actions + (action,),
+                            score + action_score,
+                            seen | {next_state},
+                            actions[0] if actions else action,
+                        )
+                    )
             if not candidates:
                 self.beam_failures += 1
                 return None
-            candidates.sort(key=lambda candidate: candidate[2], reverse=True)
-            beam = candidates[: self.beam_width]
+            # Score each successor with the network's predicted remaining
+            # distance.  This costs one batched inference per layer, but it
+            # distinguishes actions that share the same parent prediction.
+            successor_states = [candidate[0] for candidate in candidates]
+            _, _, successor_distances, _ = self._predict(successor_states)
+            ranked: list[tuple[float, tuple[PuzzleState, tuple[Action, ...], float, frozenset[PuzzleState], Action]]] = []
+            for candidate, predicted_distance in zip(candidates, successor_distances):
+                distance_term = -0.20 * min(max(predicted_distance, 0.0), 96.0) / 96.0
+                ranked.append((candidate[2] + distance_term, candidate))
+            ranked.sort(key=lambda item: item[0], reverse=True)
+            selected: list[tuple[PuzzleState, tuple[Action, ...], float, frozenset[PuzzleState]]] = []
+            selected_first_actions: set[Action] = set()
+            # Preserve route diversity before filling the remaining beam.
+            for _, candidate in ranked:
+                if candidate[4] in selected_first_actions:
+                    continue
+                selected_first_actions.add(candidate[4])
+                selected.append(candidate[:4])
+                if len(selected) >= self.beam_width:
+                    break
+            if len(selected) < self.beam_width:
+                for _, candidate in ranked:
+                    compact = candidate[:4]
+                    if compact not in selected:
+                        selected.append(compact)
+                    if len(selected) >= self.beam_width:
+                        break
+            beam = selected
         self.beam_failures += 1
         return None
 
@@ -580,6 +639,63 @@ class EighthGenerationNeuralAgent:
             beam_failure=False,
         )
 
+    def _anti_loop_fallback(self, trace: DecisionTrace, state: PuzzleState) -> DecisionTrace:
+        """Choose a neural fallback action that makes episode progress.
+
+        This intentionally uses only network scores plus exact state identity;
+        no handcrafted heuristic or A* route is consulted at runtime.
+        """
+        legal_candidates = [candidate for candidate in trace.candidates if candidate.legal]
+        if not legal_candidates:
+            return trace
+
+        recent = set(self._recent_states)
+        inverse = (
+            _INVERSE_ACTION[self._previous_action]
+            if self._previous_action is not None
+            else None
+        )
+        unvisited = []
+        for candidate in legal_candidates:
+            next_state = apply_action(state, candidate.action)
+            if next_state is None:
+                continue
+            if candidate.action == inverse:
+                continue
+            if next_state in recent or self._visit_counts.get(next_state, 0) > 0:
+                continue
+            unvisited.append(candidate)
+
+        if unvisited:
+            selected = max(unvisited, key=lambda candidate: candidate.combined_score)
+        else:
+            # When every non-reversing successor has been seen, prefer the
+            # least visited successor and use the neural score as the tie-break.
+            candidates = [
+                candidate
+                for candidate in legal_candidates
+                if candidate.action != inverse
+            ] or legal_candidates
+            selected = min(
+                candidates,
+                key=lambda candidate: (
+                    self._visit_counts.get(apply_action(state, candidate.action), 0),
+                    -candidate.combined_score,
+                ),
+            )
+
+        if selected.action == trace.selected_action:
+            return trace
+        return DecisionTrace(
+            **{
+                **trace.__dict__,
+                "selected_action": selected.action,
+                "confidence": selected.probability,
+                "decision_source": "eighth-generation-neural-anti-loop",
+                "loop_detected": True,
+            }
+        )
+
     def decide(self, state: PuzzleState, *, step: int = 0) -> DecisionTrace:
         state = tuple(state)
         started = perf_counter()
@@ -594,13 +710,19 @@ class EighthGenerationNeuralAgent:
                 self._plan_cooldown -= 1
         trace = self._trace(state, step=step, inference_ms=(perf_counter() - started) * 1000.0)
         if not self._planned_actions:
-            return DecisionTrace(
-                **{**trace.__dict__, "beam_failure": True},
-            )
+            trace = self._anti_loop_fallback(trace, state)
+            trace = DecisionTrace(**{**trace.__dict__, "beam_failure": True})
+            self._recent_states.append(state)
+            self._visit_counts[state] = self._visit_counts.get(state, 0) + 1
+            self._previous_action = trace.selected_action
+            return trace
         selected_action = self._planned_actions.popleft()
         next_state = apply_action(state, selected_action)
         self._planned_state = next_state
         candidate = next(candidate for candidate in trace.candidates if candidate.action == selected_action)
+        self._recent_states.append(state)
+        self._visit_counts[state] = self._visit_counts.get(state, 0) + 1
+        self._previous_action = selected_action
         return DecisionTrace(
             **{
                 **trace.__dict__,

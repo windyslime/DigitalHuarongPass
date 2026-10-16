@@ -16,6 +16,7 @@ from config.render import (
     WIN_HIGHLIGHT_COLOR,
     WIN_HIGHLIGHT_TIME,
     MOVE_TIME,
+    AI_MAX_STEPS,
 )
 from board import Board
 from board.board import generate_board
@@ -265,6 +266,7 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
     selector_rect = pygame.Rect(0, 0, 0, 0)
     option_rects: tuple[pygame.Rect, ...] = ()
     ai_error: str | None = None
+    ai_limit_reached = False
     trace: DecisionTrace | None = None
     recent_actions: list[str] = []
     win = False
@@ -299,6 +301,7 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
                             model_path = selected_path
                             model_name = str(metadata.get("display_name") or selected_label)
                             ai_error = None
+                            ai_limit_reached = False
                             trace = None
                             recent_actions.clear()
                             ai_enabled = was_enabled
@@ -342,6 +345,7 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
                                 metadata.get("display_name", metadata.get("stage", model_path.name))
                             )
                             ai_error = None
+                            ai_limit_reached = False
                             ai_enabled = True
                             ai_paused = False
                             trace = None
@@ -361,12 +365,16 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
                     _reset_agent_history(agent)
                     move_blocks = ((-1, -1), (-1, -1), tick - MOVE_TIME)
                     trace = None
+                    ai_error = None
+                    ai_limit_reached = False
                     recent_actions.clear()
                 elif event.key == K_ESCAPE:
                     _reset_goal_board(board)
                     _reset_agent_history(agent)
                     move_blocks = ((-1, -1), (-1, -1), tick - MOVE_TIME)
                     trace = None
+                    ai_error = None
+                    ai_limit_reached = False
                     win = False
                 elif win:
                     running = False
@@ -390,6 +398,11 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
             if board.checkWin():
                 win = True
                 end_tick = tick
+            elif trace.step >= AI_MAX_STEPS:
+                ai_enabled = False
+                ai_paused = True
+                ai_limit_reached = True
+                ai_error = f"已达到30秒上限（{AI_MAX_STEPS}步），当前盘面未解出"
 
         if tick - move_blocks[2] >= MOVE_TIME and block_num != (-1, -1):
             highlight_blocks[(block_num[1], block_num[0])] = tick

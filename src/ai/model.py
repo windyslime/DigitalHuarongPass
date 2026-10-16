@@ -24,25 +24,27 @@ class HuarongNet(nn.Module):
     def __init__(self, input_size: int = 260):
         super().__init__()
         self.input_size = input_size
+        hidden_size = 128 if input_size >= 400 else 64
+        encoder_width = 256 if input_size >= 400 else 128
         self.encoder = nn.Sequential(
-            nn.Linear(input_size, 128),
+            nn.Linear(input_size, encoder_width),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(encoder_width, hidden_size),
             nn.ReLU(),
         )
         self.residual = nn.Sequential(
-            nn.Linear(64, 64),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(hidden_size, hidden_size),
         )
         # Zero initialization keeps legacy checkpoints numerically compatible
         # while allowing eighth-generation training to learn a residual path.
         self.residual_gate = nn.Parameter(torch.zeros(1))
-        self.policy_head = nn.Linear(64, 4)
-        self.q_head = nn.Linear(64, 4)
-        self.distance_head = nn.Linear(64, 1)
-        self.distance_bucket_head = nn.Linear(64, DISTANCE_BUCKETS)
-        self.risk_head = nn.Linear(64, 4)
+        self.policy_head = nn.Linear(hidden_size, 4)
+        self.q_head = nn.Linear(hidden_size, 4)
+        self.distance_head = nn.Linear(hidden_size, 1)
+        self.distance_bucket_head = nn.Linear(hidden_size, DISTANCE_BUCKETS)
+        self.risk_head = nn.Linear(hidden_size, 4)
 
     def hidden(self, features: torch.Tensor) -> torch.Tensor:
         encoded = self.encoder(features)

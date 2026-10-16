@@ -7,6 +7,7 @@ import torch
 
 BOARD_SIDE = 4
 BOARD_SIZE = BOARD_SIDE * BOARD_SIDE
+ENHANCED_FEATURE_SIZE = 459
 PuzzleState: TypeAlias = tuple[int, ...]
 
 
@@ -148,3 +149,46 @@ def encode_state(state: PuzzleState, *, include_heuristic: bool = True) -> torch
         )
     )
     return torch.tensor(values, dtype=torch.float32)
+
+
+def encode_state_enhanced(state: PuzzleState) -> torch.Tensor:
+    """Encode the permutation with features that expose tile geometry.
+
+    The original one-hot representation is lossless, but a small MLP has to
+    rediscover that every tile has a fixed goal coordinate.  This representation
+    keeps the original 260 values and appends per-tile coordinates, signed
+    displacement, goal-row/column indicators, and the four tiles adjacent to
+    the blank.  It contains no search or handcrafted heuristic score, so it is
+    safe for the pure-neural runtime.
+    """
+    validate_state(state)
+    base = encode_state(state, include_heuristic=False).tolist()
+    features: list[float] = list(base)
+    blank_index = state.index(-1)
+    blank_row, blank_col = divmod(blank_index, BOARD_SIDE)
+    for tile in range(1, BOARD_SIZE):
+        position = state.index(tile)
+        row, col = divmod(position, BOARD_SIDE)
+        goal_row, goal_col = divmod(tile - 1, BOARD_SIDE)
+        features.extend(
+            (
+                row / 3.0,
+                col / 3.0,
+                goal_row / 3.0,
+                goal_col / 3.0,
+                (row - goal_row) / 3.0,
+                (col - goal_col) / 3.0,
+                (abs(row - goal_row) + abs(col - goal_col)) / 6.0,
+                float(row == goal_row),
+                float(col == goal_col),
+            )
+        )
+    for delta_row, delta_col in ACTION_DELTAS.values():
+        row = blank_row + delta_row
+        col = blank_col + delta_col
+        value = state[row * BOARD_SIDE + col] if 0 <= row < 4 and 0 <= col < 4 else -1
+        features.extend(float(value == candidate) for candidate in (-1, *range(1, BOARD_SIZE)))
+    encoded = torch.tensor(features, dtype=torch.float32)
+    if encoded.numel() != ENHANCED_FEATURE_SIZE:
+        raise AssertionError(f"enhanced encoding has {encoded.numel()} features")
+    return encoded

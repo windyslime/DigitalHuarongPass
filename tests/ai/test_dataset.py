@@ -2,6 +2,8 @@ from ai.dataset import (
     augment_example,
     collect_dagger_examples,
     generate_examples,
+    generate_uniform_examples,
+    generate_uniform_trajectory_examples,
     generate_trajectory_examples,
 )
 from ai.agent import NeuralAgent
@@ -64,6 +66,23 @@ def test_trajectory_examples_support_long_training_walks():
     assert len(examples) == 8
     assert len({example.state for example in examples}) == 8
     assert all(_replay_teacher_route(example) == goal_state() for example in examples)
+
+
+def test_uniform_examples_are_unique_and_replayable():
+    examples = generate_uniform_examples(12, seed=23)
+
+    assert len(examples) == 12
+    assert len({example.state for example in examples}) == 12
+    assert all(apply_action(example.state, example.expert_action) is not None for example in examples)
+    assert all(_replay_teacher_route(example) == goal_state() for example in examples)
+
+
+def test_uniform_trajectory_examples_cover_full_routes():
+    examples = generate_uniform_trajectory_examples(24, seed=31)
+
+    assert len(examples) == 24
+    assert max(example.remaining_steps for example in examples) > 1
+    assert all(apply_action(example.state, example.expert_action) is not None for example in examples)
 
 
 def test_horizontal_reflection_swaps_left_and_right_labels():

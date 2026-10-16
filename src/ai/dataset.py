@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from board import Board
-from board.board import END
+from board.board import END, is_solvable
 
 from .encoding import (
     ACTION_DELTAS,
@@ -268,6 +268,84 @@ def generate_examples(
     if len(examples) < count:
         raise RuntimeError(f"could only label {len(examples)} of {count} states")
     return tuple(examples)
+
+
+def generate_uniform_examples(
+    count: int,
+    *,
+    seed: int = 42,
+) -> tuple[Example, ...]:
+    """Label uniformly shuffled solvable boards for hard-board training.
+
+    Unlike ``generate_trajectory_examples``, this samples from the board
+    distribution used by the interactive ``R`` reset button.  The teacher is
+    still used only offline to create labels.
+    """
+    if count <= 0:
+        return ()
+    rng = random.Random(seed)
+    examples: list[Example] = []
+    seen: set[PuzzleState] = {goal_state()}
+    attempts = 0
+    max_attempts = max(100, count * 100)
+    while len(examples) < count and attempts < max_attempts:
+        attempts += 1
+        values = list(range(1, 16)) + [-1]
+        rng.shuffle(values)
+        state = tuple(values)
+        if state in seen or not is_solvable(state, 4, 4):
+            continue
+        seen.add(state)
+        labeled = _label_state(state)
+        if labeled is not None:
+            examples.append(labeled)
+    if len(examples) < count:
+        raise RuntimeError(
+            f"could only label {len(examples)} of {count} uniform random states"
+        )
+    return tuple(examples)
+
+
+def generate_uniform_trajectory_examples(
+    count: int,
+    *,
+    seed: int = 42,
+) -> tuple[Example, ...]:
+    """Collect labeled states along full teacher routes from random boards."""
+    if count <= 0:
+        return ()
+    rng = random.Random(seed)
+    examples: dict[PuzzleState, Example] = {}
+    attempts = 0
+    max_attempts = max(20, count // 8)
+    while len(examples) < count and attempts < max_attempts:
+        attempts += 1
+        values = list(range(1, 16)) + [-1]
+        rng.shuffle(values)
+        state = tuple(values)
+        if not is_solvable(state, 4, 4):
+            continue
+        trajectory = _teacher_trajectory(state)
+        if not trajectory:
+            continue
+        for route_state, action, remaining_steps in trajectory:
+            examples.setdefault(
+                route_state,
+                Example(
+                    state=route_state,
+                    expert_action=action,
+                    remaining_steps=remaining_steps,
+                    next_state=apply_action(route_state, action),
+                    distance_bucket=min(96, remaining_steps),
+                ),
+            )
+            if len(examples) >= count:
+                break
+    if len(examples) < count:
+        raise RuntimeError(
+            f"could only collect {len(examples)} of {count} uniform trajectory states"
+        )
+    return tuple(examples.values())
 
 
 def generate_trajectory_examples(

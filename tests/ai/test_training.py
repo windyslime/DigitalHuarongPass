@@ -75,3 +75,6 @@ def test_eighth_generation_writes_one_embedded_checkpoint(tmp_path: Path):
     assert len(models) == 2
     assert metadata["model_name"] == "第八代数字华容道高速王"
     assert result.metrics.exists()
+
+    metrics = __import__("json").loads(result.metrics.read_text())
+    assert metrics["uniform_random_evaluation"]["games"] == 1
