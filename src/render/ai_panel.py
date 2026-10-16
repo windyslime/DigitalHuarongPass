@@ -45,6 +45,9 @@ MODEL_LABELS = {
 @lru_cache(maxsize=None)
 def _font(size: int) -> pygame.font.Font:
     for font_path in (
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/System/Library/Fonts/STHeiti Medium.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -138,8 +141,9 @@ def draw_ai_panel(
     source = (
         "第八代纯神经 beam"
         if trace.decision_source == "eighth-generation-neural-beam"
-        else
-        "A* 循环保护"
+        else "A* 加权搜索 (w=2.0)"
+        if trace.decision_source == "astar"
+        else "A* 循环保护"
         if trace.decision_source == "astar-loop-break"
         else "A* 保护动作"
         if trace.fallback_used
@@ -163,7 +167,14 @@ def draw_ai_panel(
         inference_y = area.y + 190
         candidate_y = area.y + 222
         row_top = area.y + 248
-    _label(screen, source, (x, source_y), 16, BAD_COLOR if trace.fallback_used else MUTED_COLOR)
+    source_color = (
+        GOOD_COLOR
+        if trace.decision_source == "astar"
+        else BAD_COLOR
+        if trace.fallback_used
+        else MUTED_COLOR
+    )
+    _label(screen, source, (x, source_y), 16, source_color)
     _label(screen, f"折模型一致性 {trace.fold_agreement:.0%}", (x, agreement_y), 16, BAD_COLOR if trace.fallback_used else MUTED_COLOR)
     _label(screen, f"推理耗时 {trace.inference_ms:.2f} 毫秒", (x, inference_y), 16, MUTED_COLOR)
     _label(screen, "候选动作", (x, candidate_y), 18, MUTED_COLOR)

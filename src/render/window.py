@@ -20,7 +20,7 @@ from config.render import (
 )
 from board import Board
 from board.board import generate_board
-from ai.agent import DecisionAgent, DecisionTrace, load_agent
+from ai.agent import AStarAgent, DecisionAgent, DecisionTrace, load_agent
 from ai.encoding import ACTION_DELTAS
 from render.ai_panel import draw_action_overlay, draw_ai_panel
 
@@ -44,13 +44,26 @@ _MODEL_OPTIONS: tuple[tuple[str, Path], ...] = (
     ("监督训练模型", Path("models/final.pt")),
 )
 
+# 下拉框里的 A* 选项不对应任何 .pt 文件，用哨兵路径占位
+ASTAR_MODEL_PATH = Path("__astar__")
+ASTAR_MODEL_LABEL = "A* 求解器"
+ASTAR_OPTION = (ASTAR_MODEL_LABEL, ASTAR_MODEL_PATH)
+
 
 def _available_model_options(model_path: Path) -> tuple[tuple[str, Path], ...]:
     """Return selectable model files, keeping a custom CLI path visible."""
     options = [option for option in _MODEL_OPTIONS if option[1].exists()]
     if model_path.exists() and all(path != model_path for _, path in options):
         options.insert(0, (model_path.stem, model_path))
+    options.append(ASTAR_OPTION)
     return tuple(options)
+
+
+def _load_selected_agent(path: Path) -> tuple[DecisionAgent, dict[str, object]]:
+    """加载选中的求解器；A* 选项不需要检查点文件。"""
+    if path == ASTAR_MODEL_PATH:
+        return AStarAgent(), {"display_name": ASTAR_MODEL_LABEL}
+    return load_agent(path, use_guard=False)
 
 
 def _model_option_label(model_path: Path, options: tuple[tuple[str, Path], ...]) -> str:
@@ -295,7 +308,7 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
                         selected_label, selected_path = model_options[selected_index]
                         was_enabled = ai_enabled
                         try:
-                            loaded_agent, metadata = load_agent(selected_path, use_guard=False)
+                            loaded_agent, metadata = _load_selected_agent(selected_path)
                             agent = loaded_agent  # type: ignore[assignment]
                             _reset_agent_history(agent)
                             model_path = selected_path
@@ -336,9 +349,7 @@ def start(board: Board, *, model_path: Path = Path("models/第八代数字华容
                         trace = None
                     else:
                         try:
-                            # The seventh-generation model is fully neural at runtime.
-                            # A* remains an offline training teacher only.
-                            loaded_agent, metadata = load_agent(model_path, use_guard=False)
+                            loaded_agent, metadata = _load_selected_agent(model_path)
                             agent = loaded_agent  # type: ignore[assignment]
                             _reset_agent_history(agent)
                             model_name = str(
